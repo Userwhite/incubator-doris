@@ -3727,6 +3727,11 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         @Getter
         private long remoteSegmentSize;        // single replica
 
+        @Getter
+        private long localBinlogSize;          // single replica binlog size
+        @Getter
+        private long totalReplicaBinlogSize;
+
         public Statistics() {
             this.dbName = null;
             this.tableName = null;
@@ -3745,6 +3750,8 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             this.localSegmentSize = 0L;
             this.remoteInvertedIndexSize = 0L;
             this.remoteSegmentSize = 0L;
+            this.localBinlogSize = 0L;
+            this.totalReplicaBinlogSize = 0L;
         }
 
         public Statistics(String dbName, String tableName,
@@ -3752,7 +3759,8 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
                 long remoteDataSize, long replicaCount, long rowCount,
                 long rowsetCount, long segmentCount,
                 long localInvertedIndexSize, long localSegmentSize,
-                long remoteInvertedIndexSize, long remoteSegmentSize) {
+                long remoteInvertedIndexSize, long remoteSegmentSize,
+                long localBinlogSize, long totalReplicaBinlogSize) {
 
             this.dbName = dbName;
             this.tableName = tableName;
@@ -3772,6 +3780,9 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             this.localSegmentSize = localSegmentSize;
             this.remoteInvertedIndexSize = remoteInvertedIndexSize;
             this.remoteSegmentSize = remoteSegmentSize;
+
+            this.localBinlogSize = localBinlogSize;
+            this.totalReplicaBinlogSize = totalReplicaBinlogSize;
         }
     }
 

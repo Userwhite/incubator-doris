@@ -2150,6 +2150,10 @@ public class InternalCatalog implements CatalogIf<Database> {
                     long backendId = replica.getBackendIdWithoutException();
                     long replicaId = replica.getId();
                     countDownLatch.addMark(backendId, tabletId);
+                    MaterializedIndexMeta rowBinlogIndexMeta = null;
+                    if (tbl.needRowBinlog() && indexId == tbl.getBaseIndexId()) {
+                        rowBinlogIndexMeta = tbl.getRowBinlogMeta();
+                    }
                     CreateReplicaTask task = new CreateReplicaTask(backendId, dbId, tbl.getId(), partitionId, indexId,
                             tabletId, replicaId, shortKeyColumnCount, schemaHash, version, keysType, storageType,
                             realStorageMedium, schema, bfColumns, tbl.getBfFpp(), countDownLatch,
@@ -2169,7 +2173,8 @@ public class InternalCatalog implements CatalogIf<Database> {
                             tbl.storagePageSize(), tbl.getTDEAlgorithm(),
                             tbl.storageDictPageSize(),
                             tbl.getColumnSeqMapping(),
-                            tbl.getVerticalCompactionNumColumnsPerGroup());
+                            tbl.getVerticalCompactionNumColumnsPerGroup(),
+                            rowBinlogIndexMeta);
 
                     task.setStorageFormat(tbl.getStorageFormat());
                     task.setInvertedIndexFileStorageFormat(tbl.getInvertedIndexFileStorageFormat());

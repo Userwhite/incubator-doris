@@ -6262,9 +6262,7 @@ public class Env {
 
     public void updateBinlogConfig(Database db, OlapTable table, BinlogConfig newBinlogConfig) {
         Preconditions.checkArgument(table.isWriteLockHeldByCurrentThread());
-
         table.setBinlogConfig(newBinlogConfig);
-
         ModifyTablePropertyOperationLog info =
                 new ModifyTablePropertyOperationLog(db.getId(), table.getId(), table.getName(),
                         newBinlogConfig.toProperties());
@@ -6312,7 +6310,7 @@ public class Env {
                     break;
                 case OperationType.OP_UPDATE_BINLOG_CONFIG:
                     BinlogConfig newBinlogConfig = new BinlogConfig();
-                    newBinlogConfig.mergeFromProperties(properties);
+                    newBinlogConfig.mergeFromProperties(properties, true);
                     olapTable.setBinlogConfig(newBinlogConfig);
                     break;
                 default:

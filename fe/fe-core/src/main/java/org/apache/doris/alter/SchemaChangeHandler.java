@@ -758,6 +758,12 @@ public class SchemaChangeHandler extends AlterHandler {
                     + "please use light_schema_change = true.");
         }
 
+        long rowBinlogIndexId = olapTable.getBaseIndexMeta().getRowBinlogIndexId();
+        if (rowBinlogIndexId > 0) {
+            throw new DdlException("table with binlog<Row> don't support modify column,"
+                    + "modify column: " + modColumn);
+        }
+
         if (KeysType.AGG_KEYS == olapTable.getKeysType()) {
             if (modColumn.isKey() && null != modColumn.getAggregationType()) {
                 throw new DdlException("Can not assign aggregation method on key column: " + modColumn.getName());
