@@ -27,7 +27,6 @@ import java.util.List;
 // Column position used when add column
 public class ColumnPosition {
     public static final ColumnPosition FIRST = new ColumnPosition();
-    public static final ColumnPosition ROW_BINLOG_START = new ColumnPosition(Column.BINLOG_TIMESTAMP_COL);
 
     private String lastCol;
 
@@ -82,7 +81,7 @@ public class ColumnPosition {
             }
         }
         if (columnPosition == FIRST) {
-return FIRST;
+            return FIRST;
         } else {
             String lastCol = columnPosition.getLastCol();
             if (lastCol.equals(lastKeyCol)) {

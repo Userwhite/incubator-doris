@@ -119,9 +119,19 @@ static TDescriptorTable create_descriptor_tablet() {
     TTupleDescriptorBuilder tuple_builder;
 
     tuple_builder.add_slot(
-            TSlotDescriptorBuilder().type(TYPE_INT).column_name("k1").column_pos(0).build());
+            TSlotDescriptorBuilder()
+                    .type(TYPE_INT)
+                    .column_name("k1")
+                    .column_pos(0)
+                    .nullable(false)
+                    .build());
     tuple_builder.add_slot(
-            TSlotDescriptorBuilder().type(TYPE_INT).column_name("v1").column_pos(1).build());
+            TSlotDescriptorBuilder()
+                    .type(TYPE_INT)
+                    .column_name("v1")
+                    .column_pos(1)
+                    .nullable(false)
+                    .build());
     tuple_builder.build(&dtb);
 
     return dtb.desc_tbl();
