@@ -2310,10 +2310,10 @@ public class InternalCatalog implements CatalogIf<Database> {
         }
         BinlogConfig createTableBinlogConfig = new BinlogConfig(dbBinlogConfig);
         createTableBinlogConfig.mergeFromProperties(createTableInfo.getProperties());
-        if (dbBinlogConfig.isEnable() && !createTableBinlogConfig.isEnable() && !createTableInfo.isTemp()) {
+        if (dbBinlogConfig.getEnable() && !createTableBinlogConfig.isEnableForCCR() && !createTableInfo.isTemp()) {
             throw new DdlException("Cannot create table with binlog disabled when database binlog enable");
         }
-        if (createTableInfo.isTemp() && createTableBinlogConfig.isEnable()) {
+        if (createTableInfo.isTemp() && createTableBinlogConfig.isEnableForCCR()) {
             throw new DdlException("Cannot create temporary table with binlog enable");
         }
         createTableInfo.getProperties().putAll(createTableBinlogConfig.toProperties());
@@ -2840,6 +2840,24 @@ public class InternalCatalog implements CatalogIf<Database> {
             if (binlogConfigMap != null) {
                 BinlogConfig binlogConfig = new BinlogConfig();
                 binlogConfig.mergeFromProperties(binlogConfigMap);
+                if (binlogConfig.isEnableForStreaming()) {
+                    if (!(keysType == KeysType.DUP_KEYS
+                            || (keysType == KeysType.UNIQUE_KEYS && enableUniqueKeyMergeOnWrite))) {
+                        throw new AnalysisException("Only duplicate and mow table model support binlog<Row>, "
+                                + "if you want to use mor or aggregate table model, "
+                                + "please use binlog with snapshot");
+                    }
+                    if (keysType == KeysType.DUP_KEYS && binlogConfig.getNeedHistoricalValue()) {
+                        throw new AnalysisException("Duplicate table model don't support record historical value");
+                    }
+                    for (Column column : baseSchema) {
+                        if (column.isAutoInc()) {
+                            throw new AnalysisException("auto-inc column can't be created on table with binlog<Row>");
+                        } else if (column.getDataType().isVariantType()) {
+                            throw new AnalysisException("variant column can't be created on table with binlog<Row>");
+                        }
+                    }
+                }
                 olapTable.setBinlogConfig(binlogConfig);
             }
         } catch (AnalysisException e) {
@@ -2944,6 +2962,10 @@ public class InternalCatalog implements CatalogIf<Database> {
         int schemaHash = Util.generateSchemaHash();
         olapTable.setIndexMeta(baseIndexId, tableName, baseSchema, schemaVersion, schemaHash, shortKeyColumnCount,
                 baseIndexStorageType, keysType, olapTable.getIndexes());
+
+        if (olapTable.getBinlogConfig().isEnableForStreaming()) {
+            olapTable.createNewRowBinlogMeta(idGeneratorBuffer);
+        }
 
         for (AlterOp alterOp : createTableInfo.getAddRollupOps()) {
             if (olapTable.isDuplicateWithoutKey()) {

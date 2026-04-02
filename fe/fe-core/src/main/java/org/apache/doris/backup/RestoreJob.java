@@ -714,6 +714,12 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
 
                 if (localTbl != null) {
                     OlapTable localOlapTbl = (OlapTable) localTbl;
+                    if (localOlapTbl.needRowBinlog()) {
+                        status = new Status(ErrCode.COMMON_ERROR,
+                                "Do not support restore into local table with binlog<Row> enabled: "
+                                        + localOlapTbl.getName());
+                        return;
+                    }
                     OlapTable remoteOlapTbl = (OlapTable) remoteTbl;
 
                     if (localOlapTbl.isColocateTable() || (reserveColocate && remoteOlapTbl.isColocateTable())) {
