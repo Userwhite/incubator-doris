@@ -431,8 +431,8 @@ void TabletMeta::init_column_from_tcolumn(uint32_t unique_id, const TColumn& tco
 }
 
 void TabletMeta::init_schema_from_thrift(const TTabletSchema& tablet_schema,
-                                        const SchemaCreateOptions& schema_create_options,
-                                        TabletSchemaPB* tablet_schema_pb) {
+                                         const SchemaCreateOptions& schema_create_options,
+                                         TabletSchemaPB* tablet_schema_pb) {
     const std::unordered_map<uint32_t, uint32_t>& col_ordinal_to_unique_id =
             schema_create_options.col_ordinal_to_unique_id;
     TCompressionType::type compression_type = schema_create_options.compression_type;
@@ -444,7 +444,7 @@ void TabletMeta::init_schema_from_thrift(const TTabletSchema& tablet_schema,
     tablet_schema_pb->set_num_rows_per_row_block(config::default_num_rows_per_column_file_block);
     tablet_schema_pb->set_sequence_col_idx(tablet_schema.sequence_col_idx);
     auto p_seq_map = tablet_schema_pb->mutable_seq_map(); // ColumnGroupsPB
-    for (auto& it : tablet_schema.seq_map) {               // std::vector< ::doris::TColumnGroup>
+    for (auto& it : tablet_schema.seq_map) {              // std::vector< ::doris::TColumnGroup>
         uint32_t key = it.sequence_column;
         ColumnGroupPB* cg_pb = p_seq_map->add_cg(); // ColumnGroupPB {key: {v1, v2, v3}}
         cg_pb->set_sequence_column(key);

@@ -116,11 +116,9 @@ public:
         _rowset_meta_pb.set_tablet_schema_hash(tablet_schema_hash);
     }
 
-    void mark_row_binlog() {
-        _rowset_meta_pb.set_is_row_binlog(true);
-    }
+    void mark_row_binlog() { _rowset_meta_pb.set_is_row_binlog(true); }
 
-    bool is_row_binlog() const { 
+    bool is_row_binlog() const {
         return _rowset_meta_pb.has_is_row_binlog() && _rowset_meta_pb.is_row_binlog();
     }
 

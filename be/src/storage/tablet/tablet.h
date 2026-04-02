@@ -117,7 +117,9 @@ public:
     int64_t replica_id() const { return _tablet_meta->replica_id(); }
 
     std::string tablet_path() const override { return _tablet_path; }
-    std::string row_binlog_path() const { return fmt::format("{}/{}", _tablet_path, FDRowBinlogSuffix); }
+    std::string row_binlog_path() const {
+        return fmt::format("{}/{}", _tablet_path, FDRowBinlogSuffix);
+    }
     std::string get_rowset_path(const RowsetMetaSharedPtr& rowset_meta) const {
         if (!rowset_meta->is_local()) {
             return "";
@@ -477,10 +479,15 @@ public:
     int64_t get_table_id() { return _tablet_meta->table_id(); }
 
     // binlog related functions
-    bool enable_binlog() const { return config::enable_feature_binlog && _tablet_meta->binlog_config().is_enable(); }
-    bool enable_ccr_binlog() const { return enable_binlog() && _tablet_meta->binlog_config().isCCRBinlogFormat(); }
+    bool enable_binlog() const {
+        return config::enable_feature_binlog && _tablet_meta->binlog_config().is_enable();
+    }
+    bool enable_ccr_binlog() const {
+        return enable_binlog() && _tablet_meta->binlog_config().isCCRBinlogFormat();
+    }
     bool enable_row_binlog() const {
-        return _tablet_meta->binlog_config().is_enable() && _tablet_meta->binlog_config().isRowBinlogFormat(); 
+        return _tablet_meta->binlog_config().is_enable() &&
+               _tablet_meta->binlog_config().isRowBinlogFormat();
     }
 
     int64_t binlog_ttl_ms() const { return _tablet_meta->binlog_config().ttl_seconds(); }

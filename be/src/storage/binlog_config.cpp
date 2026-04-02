@@ -83,8 +83,10 @@ void BinlogConfig::to_pb(BinlogConfigPB* config_pb) const {
 
 std::string BinlogConfig::to_string() const {
     return fmt::format(
-            "BinlogConfig enable: {}, ttl_seconds: {}, max_bytes: {}, max_history_nums: {}, binlog_format: {}, need_historical_value: {}",
-            _enable, _ttl_seconds, _max_bytes, _max_history_nums, _binlog_format, _need_historical_value);
+            "BinlogConfig enable: {}, ttl_seconds: {}, max_bytes: {}, max_history_nums: {}, "
+            "binlog_format: {}, need_historical_value: {}",
+            _enable, _ttl_seconds, _max_bytes, _max_history_nums, _binlog_format,
+            _need_historical_value);
 }
 
 } // namespace doris

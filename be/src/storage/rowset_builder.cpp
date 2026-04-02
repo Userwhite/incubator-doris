@@ -39,12 +39,12 @@
 #include "storage/partial_update_info.h"
 #include "storage/rowset/beta_rowset.h"
 #include "storage/rowset/beta_rowset_writer.h"
+#include "storage/rowset/group_rowset_writer.h"
 #include "storage/rowset/pending_rowset_helper.h"
 #include "storage/rowset/rowset_meta.h"
 #include "storage/rowset/rowset_meta_manager.h"
 #include "storage/rowset/rowset_writer.h"
 #include "storage/rowset/rowset_writer_context.h"
-#include "storage/rowset/group_rowset_writer.h"
 #include "storage/schema_change/schema_change.h"
 #include "storage/storage_engine.h"
 #include "storage/tablet/tablet_manager.h"
@@ -64,13 +64,13 @@ namespace doris {
 #include "common/compile_check_begin.h"
 using namespace ErrorCode;
 
-
 BaseRowsetBuilder::BaseRowsetBuilder(const WriteRequest& req, RuntimeProfile* profile)
         : _req(req), _tablet_schema(std::make_shared<TabletSchema>()) {
     _init_profile(profile);
 }
 
-RowsetBuilder::RowsetBuilder(StorageEngine& engine, const WriteRequest& req, RuntimeProfile* profile)
+RowsetBuilder::RowsetBuilder(StorageEngine& engine, const WriteRequest& req,
+                             RuntimeProfile* profile)
         : BaseRowsetBuilder(req, profile), _engine(engine) {}
 
 RowBinlogRowsetBuilder::RowBinlogRowsetBuilder(StorageEngine& engine, const WriteRequest& req,
@@ -79,14 +79,15 @@ RowBinlogRowsetBuilder::RowBinlogRowsetBuilder(StorageEngine& engine, const Writ
 
 void BaseRowsetBuilder::_init_profile(RuntimeProfile* profile) {
     if (_req.write_req_type == WriteRequestType::GROUP) {
-        _profile = profile->create_child(fmt::format("GroupRowsetBuilder {}", _req.tablet_id),
-                                         true, true);
+        _profile = profile->create_child(fmt::format("GroupRowsetBuilder {}", _req.tablet_id), true,
+                                         true);
         return;
     }
 
     _profile = profile->create_child(
-            fmt::format("RowsetBuilder {} {}",
-            _req.tablet_id, _req.write_req_type == WriteRequestType::ROW_BINLOG ? "row_binlog" : "data"),
+            fmt::format(
+                    "RowsetBuilder {} {}", _req.tablet_id,
+                    _req.write_req_type == WriteRequestType::ROW_BINLOG ? "row_binlog" : "data"),
             true, true);
     _build_rowset_timer = ADD_TIMER(_profile, "BuildRowsetTime");
     _submit_delete_bitmap_timer = ADD_TIMER(_profile, "DeleteBitmapSubmitTime");
@@ -210,7 +211,7 @@ Status RowsetBuilder::init() {
     RowsetWriterContext context;
 
     RETURN_IF_ERROR(_init_context_common_fields(context));
-    
+
     if (tablet()->enable_row_binlog()) {
         context.write_binlog_opt().mark_primary_writer();
     }
@@ -252,7 +253,8 @@ Status RowsetBuilder::init() {
 
     std::vector<RowsetId> tmp_pending_rowset_ids = {_rowset_id};
     tmp_pending_rowset_ids.resize(1 + _attach_rowset_ids.size());
-    std::copy(_attach_rowset_ids.begin(), _attach_rowset_ids.end(), tmp_pending_rowset_ids.begin() + 1);
+    std::copy(_attach_rowset_ids.begin(), _attach_rowset_ids.end(),
+              tmp_pending_rowset_ids.begin() + 1);
     _pending_rs_guard = _engine.pending_local_rowsets().add(tmp_pending_rowset_ids);
 
     _calc_delete_bitmap_token = _engine.calc_delete_bitmap_executor()->create_token();
@@ -474,8 +476,7 @@ Status BaseRowsetBuilder::_build_current_tablet_schema(
 }
 
 GroupRowsetBuilder::GroupRowsetBuilder(StorageEngine& engine, const WriteRequest& req,
-                                       const WriteRequest& row_binlog_req,
-                                       RuntimeProfile* profile)
+                                       const WriteRequest& row_binlog_req, RuntimeProfile* profile)
         : BaseRowsetBuilder(
                   [](int64_t tablet_id) {
                       WriteRequest group_req;
@@ -493,10 +494,10 @@ Status GroupRowsetBuilder::init() {
     // init binlog builder first so that its rowset id can be added into
     // PendingLocalRowsets before txn builder init.
     RETURN_IF_ERROR(_row_binlog_rowset_builder->init());
-    // before init txn, need to add all rowset_ids into PendingLocalRowsets. 
+    // before init txn, need to add all rowset_ids into PendingLocalRowsets.
     // see https://github.com/apache/doris/pull/25921
-    RETURN_IF_ERROR(
-            _txn_rs_builder->attach_pending_rs_guard_to_txn(_row_binlog_rowset_builder->rowset_id()));
+    RETURN_IF_ERROR(_txn_rs_builder->attach_pending_rs_guard_to_txn(
+            _row_binlog_rowset_builder->rowset_id()));
     RETURN_IF_ERROR(_txn_rs_builder->init());
 
     // Create a GroupRowsetWriter that forwards flush to both underlying
@@ -522,8 +523,7 @@ Status GroupRowsetBuilder::wait_calc_delete_bitmap() {
 Status GroupRowsetBuilder::commit_txn() {
     // Attach binlog rowset to txn rowset, so that commit/rollback and
     // clean-up are all handled by txn rowset builder.
-    RETURN_IF_ERROR(
-            _txn_rs_builder->attach_rowset_to_txn(_row_binlog_rowset_builder->rowset()));
+    RETURN_IF_ERROR(_txn_rs_builder->attach_rowset_to_txn(_row_binlog_rowset_builder->rowset()));
     return _txn_rs_builder->commit_txn();
 }
 
@@ -533,12 +533,13 @@ Status RowBinlogRowsetBuilder::init() {
     RETURN_IF_ERROR(_init_context_common_fields(context));
 
     // build tablet schema in request level
-    RETURN_IF_ERROR(_build_current_tablet_schema(_req.index_id, _req.table_schema_param.get(),
-                                                 *std::dynamic_pointer_cast<Tablet>(_tablet)->row_binlog_tablet_schema()));
+    RETURN_IF_ERROR(_build_current_tablet_schema(
+            _req.index_id, _req.table_schema_param.get(),
+            *std::dynamic_pointer_cast<Tablet>(_tablet)->row_binlog_tablet_schema()));
     context.write_binlog_opt().mark_binlog_writer();
 
     _rowset_writer = DORIS_TRY(_tablet->create_rowset_writer(context, false));
-    // need to attach PendingRowsetGuard after txn_rs_builder init 
+    // need to attach PendingRowsetGuard after txn_rs_builder init
     _rowset_id = context.rowset_id;
 
     _is_init = true;

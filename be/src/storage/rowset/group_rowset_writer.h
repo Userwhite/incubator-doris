@@ -38,13 +38,9 @@ public:
 
     Status build_rowsets(std::vector<RowsetSharedPtr>& rowsets);
 
-    RowsetWriterSharedPtr row_binlog_writer() {
-        return _row_binlog_rowset_writer;
-    }
+    RowsetWriterSharedPtr row_binlog_writer() { return _row_binlog_rowset_writer; }
 
-    RowsetWriterSharedPtr data_writer() {
-        return _txn_rowset_writer;
-    }
+    RowsetWriterSharedPtr data_writer() { return _txn_rowset_writer; }
 
     Status init(const RowsetWriterContext& rowset_writer_context) override {
         _context = rowset_writer_context;
@@ -95,13 +91,9 @@ public:
 
     int64_t num_rows_deleted() const override { return _txn_rowset_writer->num_rows_deleted(); }
 
-    int64_t num_rows_new_added() const override {
-        return _txn_rowset_writer->num_rows_new_added();
-    }
+    int64_t num_rows_new_added() const override { return _txn_rowset_writer->num_rows_new_added(); }
 
-    int64_t num_rows_filtered() const override {
-        return _txn_rowset_writer->num_rows_filtered();
-    }
+    int64_t num_rows_filtered() const override { return _txn_rowset_writer->num_rows_filtered(); }
 
     RowsetId rowset_id() override {
         LOG(FATAL) << "GroupRowsetWriter::rowset_id not implemented";

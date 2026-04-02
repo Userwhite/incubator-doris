@@ -19,6 +19,7 @@
 
 #include <gen_cpp/AgentService_types.h>
 #include <gen_cpp/olap_file.pb.h>
+
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -65,7 +66,9 @@ public:
         _need_historical_value = need_historical_value;
     }
 
-    bool isCCRBinlogFormat() const { return _binlog_format == BinlogFormatPB::STATEMENT_AND_SNAPSHOT; }
+    bool isCCRBinlogFormat() const {
+        return _binlog_format == BinlogFormatPB::STATEMENT_AND_SNAPSHOT;
+    }
     bool isRowBinlogFormat() const { return _binlog_format == BinlogFormatPB::ROW; }
 
     BinlogConfig& operator=(const TBinlogConfig& config);

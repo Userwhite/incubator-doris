@@ -65,7 +65,6 @@ Result<std::unique_ptr<RowsetWriter>> RowsetFactory::create_rowset_writer(
             writer = std::make_unique<RowBinlogRowsetWriter>(engine);
             RETURN_IF_ERROR_RESULT(writer->init(context));
             return writer;
-
         }
     }
     if (context.rowset_type == BETA_ROWSET) {
@@ -97,8 +96,7 @@ Result<std::unique_ptr<RowsetWriter>> RowsetFactory::create_rowset_writer(
     return writer;
 }
 
-Status RowsetFactory::create_empty_group_rowset_writer(
-        std::unique_ptr<GroupRowsetWriter>* output) {
+Status RowsetFactory::create_empty_group_rowset_writer(std::unique_ptr<GroupRowsetWriter>* output) {
     output->reset(new GroupRowsetWriter());
     return Status::OK();
 }

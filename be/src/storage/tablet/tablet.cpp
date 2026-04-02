@@ -1991,7 +1991,8 @@ Status Tablet::create_initial_rowset(const int64_t req_version) {
 
         RETURN_IF_ERROR(group_rowset_writer->build_rowsets(waited_build_rowsets));
         // don't need to think rollback when only one rowset build success becuase they had not been persisted.
-        RETURN_IF_ERROR(add_rowset(std::move(waited_build_rowsets.at(0)), waited_build_rowsets.at(1)));
+        RETURN_IF_ERROR(
+                add_rowset(std::move(waited_build_rowsets.at(0)), waited_build_rowsets.at(1)));
     }
 
     set_cumulative_layer_point(req_version + 1);
@@ -2077,8 +2078,8 @@ void Tablet::_init_context_common_fields(RowsetWriterContext& context) {
 }
 
 Status Tablet::create_rowset(const RowsetMetaSharedPtr& rowset_meta, RowsetSharedPtr* rowset) {
-    return RowsetFactory::create_rowset(_tablet_meta->tablet_schema(),
-                                        get_rowset_path(rowset_meta), rowset_meta, rowset);
+    return RowsetFactory::create_rowset(_tablet_meta->tablet_schema(), get_rowset_path(rowset_meta),
+                                        rowset_meta, rowset);
 }
 
 Status Tablet::cooldown(RowsetSharedPtr rowset) {

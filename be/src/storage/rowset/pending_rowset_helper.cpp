@@ -29,7 +29,8 @@ PendingRowsetGuard::~PendingRowsetGuard() {
     }
 }
 
-PendingRowsetGuard::PendingRowsetGuard(const std::vector<RowsetId>& rowset_ids, PendingRowsetSet* set)
+PendingRowsetGuard::PendingRowsetGuard(const std::vector<RowsetId>& rowset_ids,
+                                       PendingRowsetSet* set)
         : _rowset_ids(rowset_ids), _pending_rowset_set(set) {}
 
 PendingRowsetGuard::PendingRowsetGuard(PendingRowsetGuard&& other) noexcept {
@@ -60,7 +61,7 @@ void PendingRowsetGuard::drop() {
         }
     }
     _pending_rowset_set = nullptr;
-    _rowset_ids = std::vector{RowsetId {}};
+    _rowset_ids = std::vector {RowsetId {}};
 }
 
 bool PendingRowsetSet::contains(const RowsetId& rowset_id) {
@@ -73,7 +74,7 @@ PendingRowsetGuard PendingRowsetSet::add(const RowsetId& rowset_id) {
         std::lock_guard lock(_mtx);
         _set.insert(rowset_id);
     }
-    return PendingRowsetGuard {std::vector<RowsetId>{rowset_id}, this};
+    return PendingRowsetGuard {std::vector<RowsetId> {rowset_id}, this};
 }
 
 PendingRowsetGuard PendingRowsetSet::add(const std::vector<RowsetId>& rowset_ids) {

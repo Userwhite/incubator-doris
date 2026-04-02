@@ -38,7 +38,6 @@
 #include "storage/tablet/tablet.h"
 #include "storage/tablet/tablet_schema.h"
 
-
 namespace doris {
 
 class RowsetWriterContextBuilder;
@@ -257,21 +256,24 @@ struct RowsetWriterContext {
 
         void mark_binlog_writer() { binlog_write_type = BinlogWriteType::BinlogWriter; }
 
-        bool is_primary_writer() const { return binlog_write_type == BinlogWriteType::PrimaryWriter; }
+        bool is_primary_writer() const {
+            return binlog_write_type == BinlogWriteType::PrimaryWriter;
+        }
 
         bool is_binlog_writer() const { return binlog_write_type == BinlogWriteType::BinlogWriter; }
 
         bool need_build_binlog() const { return binlog_write_type != BinlogWriteType::Unknown; }
 
-        void set_need_before(bool need_before) {
-            this->_need_before = need_before;
-        }
+        void set_need_before(bool need_before) { this->_need_before = need_before; }
 
     private:
         // if you don't need to build row_binlog, `PrimaryWriter` and `BinlogWriter` are both false
         // if you need to build row_binlog, the `is_primary_writer` of normal rowset writer is true
-        enum BinlogWriteType { PrimaryWriter, BinlogWriter, Unknown } binlog_write_type =
-                BinlogWriteType::Unknown;
+        enum BinlogWriteType {
+            PrimaryWriter,
+            BinlogWriter,
+            Unknown
+        } binlog_write_type = BinlogWriteType::Unknown;
         bool _need_before = false;
     } _write_binlog_opt;
 

@@ -273,8 +273,7 @@ BaseBetaRowsetWriter::BaseBetaRowsetWriter()
 BetaRowsetWriter::BetaRowsetWriter(StorageEngine& engine)
         : _engine(engine), _segcompaction_worker(std::make_shared<SegcompactionWorker>(this)) {}
 
-RowBinlogRowsetWriter::RowBinlogRowsetWriter(StorageEngine& engine)
-        : BetaRowsetWriter(engine) {}
+RowBinlogRowsetWriter::RowBinlogRowsetWriter(StorageEngine& engine) : BetaRowsetWriter(engine) {}
 
 BaseBetaRowsetWriter::~BaseBetaRowsetWriter() {
     if (!_already_built && _rowset_meta->is_local()) {

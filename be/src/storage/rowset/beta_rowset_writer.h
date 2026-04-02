@@ -320,7 +320,7 @@ private:
 };
 
 class RowBinlogRowsetWriter : public BetaRowsetWriter {
-public: 
+public:
     RowBinlogRowsetWriter(StorageEngine& engine);
 };
 
