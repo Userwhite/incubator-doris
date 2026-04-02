@@ -385,11 +385,12 @@ public class ShowDataCommand extends ShowCommand {
 
         if (!detailed) {
             totalRows.add(Arrays.asList("Total", DebugUtil.printByteWithUnit(totalSize),
-                    String.valueOf(totalReplicaCount), DebugUtil.printByteWithUnit(totalRemoteSize)));
+                    String.valueOf(totalReplicaCount), DebugUtil.printByteWithUnit(totalRemoteSize),
+                    DebugUtil.printByteWithUnit(totalBinlogSize)));
             totalRows.add(Arrays.asList("Quota", DebugUtil.printByteWithUnit(quota),
-                    String.valueOf(replicaQuota), ""));
+                    String.valueOf(replicaQuota), "", ""));
             totalRows.add(Arrays.asList("Left", DebugUtil.printByteWithUnit(left),
-                    String.valueOf(replicaCountLeft), ""));
+                    String.valueOf(replicaCountLeft), "", ""));
         } else {
             totalRows.add(Arrays.asList("Total", String.valueOf(totalReplicaCount),
                     DebugUtil.printByteWithUnit(totalSize),

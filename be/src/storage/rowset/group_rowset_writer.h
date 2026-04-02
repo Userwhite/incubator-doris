@@ -20,10 +20,6 @@
 #include "storage/rowset/rowset_writer.h"
 
 namespace doris {
-namespace vectorized {
-class Block;
-} // namespace vectorized
-
 class GroupRowsetWriter : public RowsetWriter {
 public:
     GroupRowsetWriter() = default;
@@ -47,7 +43,7 @@ public:
         return Status::OK();
     }
 
-    Status add_block(const vectorized::Block* block) override {
+    Status add_block(const Block* block) override {
         return Status::Error<ErrorCode::NOT_IMPLEMENTED_ERROR>(
                 "GroupRowsetWriter::add_block is not implemented");
     }

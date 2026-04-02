@@ -40,6 +40,7 @@
 #include "storage/rowset/beta_rowset.h"
 #include "storage/rowset/beta_rowset_writer.h"
 #include "storage/rowset/group_rowset_writer.h"
+#include "storage/rowset/rowset_factory.h"
 #include "storage/rowset/pending_rowset_helper.h"
 #include "storage/rowset/rowset_meta.h"
 #include "storage/rowset/rowset_meta_manager.h"

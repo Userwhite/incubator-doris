@@ -93,6 +93,7 @@
 #include "storage/olap_define.h"
 #include "storage/olap_meta.h"
 #include "storage/rowset/beta_rowset.h"
+#include "storage/rowset/group_rowset_writer.h"
 #include "storage/rowset/rowset.h"
 #include "storage/rowset/rowset_factory.h"
 #include "storage/rowset/rowset_fwd.h"

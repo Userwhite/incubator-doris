@@ -38,6 +38,7 @@
 #include "common/config.h"
 #include "common/metrics/metrics.h"
 #include "common/status.h"
+#include "storage/binlog.h"
 #include "storage/binlog_config.h"
 #include "storage/data_dir.h"
 #include "storage/olap_common.h"
