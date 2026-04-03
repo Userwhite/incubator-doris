@@ -37,8 +37,7 @@ PendingRowsetGuard::PendingRowsetGuard(PendingRowsetGuard&& other) noexcept {
     CHECK(!_pending_rowset_set ||
           (_rowset_ids == other._rowset_ids && _pending_rowset_set == other._pending_rowset_set))
             << _rowset_ids.size() << ' ' << other._rowset_ids.size() << ' ' << _pending_rowset_set
-            << ' '
-            << other._pending_rowset_set;
+            << ' ' << other._pending_rowset_set;
     _rowset_ids = other._rowset_ids;
     _pending_rowset_set = other._pending_rowset_set;
     other._pending_rowset_set = nullptr;
@@ -48,8 +47,7 @@ PendingRowsetGuard& PendingRowsetGuard::operator=(PendingRowsetGuard&& other) no
     CHECK(!_pending_rowset_set ||
           (_rowset_ids == other._rowset_ids && _pending_rowset_set == other._pending_rowset_set))
             << _rowset_ids.size() << ' ' << other._rowset_ids.size() << ' ' << _pending_rowset_set
-            << ' '
-            << other._pending_rowset_set;
+            << ' ' << other._pending_rowset_set;
     _rowset_ids = other._rowset_ids;
     _pending_rowset_set = other._pending_rowset_set;
     other._pending_rowset_set = nullptr;
