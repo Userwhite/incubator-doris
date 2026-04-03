@@ -29,15 +29,15 @@
 #include "common/config.h"
 #include "io/fs/local_file_system.h"
 #include "load/memtable/memtable_memory_limiter.h"
+#include "runtime/descriptor_helper.h"
+#include "runtime/descriptors.h"
+#include "runtime/exec_env.h"
 #include "storage/data_dir.h"
 #include "storage/rowset_builder.h"
 #include "storage/storage_engine.h"
 #include "storage/tablet/tablet.h"
 #include "storage/tablet/tablet_manager.h"
 #include "storage/tablet_info.h"
-#include "runtime/descriptor_helper.h"
-#include "runtime/descriptors.h"
-#include "runtime/exec_env.h"
 
 namespace doris {
 

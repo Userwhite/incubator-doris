@@ -73,6 +73,7 @@ public class ShowDataCommand extends ShowCommand {
                     .addColumn(new Column("DbName", ScalarType.createVarchar(20)))
                     .addColumn(new Column("Size", ScalarType.createVarchar(30)))
                     .addColumn(new Column("RemoteSize", ScalarType.createVarchar(30)))
+                    .addColumn(new Column("BinlogSize", ScalarType.createVarchar(30)))
                     .addColumn(new Column("RecycleSize", ScalarType.createVarchar(30)))
                     .addColumn(new Column("RecycleRemoteSize", ScalarType.createVarchar(30)))
                     .build();
@@ -646,7 +647,7 @@ public class ShowDataCommand extends ShowCommand {
         return false;
     }
 
-    // |DbId|DbName|Size|RemoteSize|RecycleSize|RecycleRemoteSize|
+    // |DbId|DbName|Size|RemoteSize|BinlogSize|RecycleSize|RecycleRemoteSize|
     private void getAllDbStats() throws AnalysisException {
         // check auth
         if (!Env.getCurrentEnv().getAccessManager().checkGlobalPriv(ConnectContext.get(), PrivPredicate.ADMIN)) {
@@ -659,6 +660,7 @@ public class ShowDataCommand extends ShowCommand {
         }
         long totalSize = 0;
         long totalRemoteSize = 0;
+        long totalBinlogSize = 0;
         long totalRecycleSize = 0;
         long totalRecycleRemoteSize = 0;
         Map<Long, Pair<Long, Long>> dbToRecycleSize = Env.getCurrentRecycleBin().getDbToRecycleSize();
@@ -674,10 +676,19 @@ public class ShowDataCommand extends ShowCommand {
                 dbInfo.add(String.valueOf(db.getId()));
                 dbInfo.add(dbName);
                 Pair<Long, Long> usedSize = ((Database) db).getUsedDataSize();
+                long usedBinlogSize = 0;
+                for (Table table : ((Database) db).getTables()) {
+                    if (!table.isManagedTable()) {
+                        continue;
+                    }
+                    usedBinlogSize += ((OlapTable) table).getBinlogSize();
+                }
                 dbInfo.add(String.valueOf(usedSize.first));
                 dbInfo.add(String.valueOf(usedSize.second));
+                dbInfo.add(String.valueOf(usedBinlogSize));
                 totalSize += usedSize.first;
                 totalRemoteSize += usedSize.second;
+                totalBinlogSize += usedBinlogSize;
             } finally {
                 db.readUnlock();
             }
@@ -698,6 +709,7 @@ public class ShowDataCommand extends ShowCommand {
             dbInfo.add("NULL");
             dbInfo.add("0");
             dbInfo.add("0");
+            dbInfo.add("0");
             dbInfo.add(String.valueOf(entry.getValue().first));
             dbInfo.add(String.valueOf(entry.getValue().second));
             totalRecycleSize += entry.getValue().first;
@@ -711,6 +723,7 @@ public class ShowDataCommand extends ShowCommand {
         dbInfo.add("NULL");
         dbInfo.add(String.valueOf(totalSize));
         dbInfo.add(String.valueOf(totalRemoteSize));
+        dbInfo.add(String.valueOf(totalBinlogSize));
         dbInfo.add(String.valueOf(totalRecycleSize));
         dbInfo.add(String.valueOf(totalRecycleRemoteSize));
         totalRows.add(dbInfo);

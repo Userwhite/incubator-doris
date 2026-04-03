@@ -67,7 +67,7 @@ public class ShowDataCommandTest {
     private Database database;
 
     @Test
-    public void testValidateShowDataWithRowBinlogColumns() throws Exception {
+    public void testValidateShowDataNormal() throws Exception {
         Database db = CatalogMocker.mockDb();
         new Expectations() {
             {
@@ -120,7 +120,7 @@ public class ShowDataCommandTest {
     }
 
     @Test
-    public void testValidateShowAllDataWithRowBinlogColumns() throws Exception {
+    public void testValidateShowAllDataNormal() throws Exception {
         Database db = CatalogMocker.mockDb();
         new Expectations() {
             {

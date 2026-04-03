@@ -21,6 +21,8 @@
 #include <gen_cpp/AgentService_types.h>
 #include <gen_cpp/olap_file.pb.h>
 
+#include "common/logging.h"
+
 namespace doris {
 BinlogConfig& BinlogConfig::operator=(const TBinlogConfig& config) {
     if (config.__isset.enable) {
