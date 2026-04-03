@@ -386,10 +386,18 @@ public class TabletStatMgr extends MasterDaemon {
                     if (replica != null) {
                         replica.setDataSize(stat.getDataSize());
                         replica.setRemoteDataSize(stat.getRemoteDataSize());
+                        replica.setLocalInvertedIndexSize(stat.getLocalIndexSize());
+                        replica.setLocalSegmentSize(stat.getLocalSegmentSize());
+                        replica.setRemoteInvertedIndexSize(stat.getRemoteIndexSize());
+                        replica.setRemoteSegmentSize(stat.getRemoteSegmentSize());
                         replica.setRowCount(stat.getRowCount());
                         replica.setTotalVersionCount(stat.getTotalVersionCount());
                         replica.setVisibleVersionCount(stat.isSetVisibleVersionCount() ? stat.getVisibleVersionCount()
                                 : stat.getTotalVersionCount());
+                        // Older version BE doesn't set visible version. Set it to max for compatibility.
+                        replica.setLastReportVersion(stat.isSetVisibleVersion() ? stat.getVisibleVersion()
+                                : Long.MAX_VALUE);
+
                         if (stat.isSetBinlogSize()) {
                             replica.setBinlogSize(stat.getBinlogSize());
                             replica.setBinlogFileNum(stat.getBinlogFileNum());

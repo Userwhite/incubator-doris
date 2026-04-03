@@ -282,7 +282,7 @@ public class Partition extends MetaObject {
     public long getBinlogDataSize() {
         long binlogDataSize = 0;
         for (MaterializedIndex mIndex : getMaterializedIndices(IndexExtState.VISIBLE)) {
-            binlogDataSize += mIndex.getBinlogDataSize();
+            binlogDataSize += mIndex.getBinlogSize();
         }
         return binlogDataSize;
     }

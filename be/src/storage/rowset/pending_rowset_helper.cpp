@@ -36,7 +36,8 @@ PendingRowsetGuard::PendingRowsetGuard(const std::vector<RowsetId>& rowset_ids,
 PendingRowsetGuard::PendingRowsetGuard(PendingRowsetGuard&& other) noexcept {
     CHECK(!_pending_rowset_set ||
           (_rowset_ids == other._rowset_ids && _pending_rowset_set == other._pending_rowset_set))
-            << _rowset_ids << ' ' << other._rowset_ids << ' ' << _pending_rowset_set << ' '
+            << _rowset_ids.size() << ' ' << other._rowset_ids.size() << ' ' << _pending_rowset_set
+            << ' '
             << other._pending_rowset_set;
     _rowset_ids = other._rowset_ids;
     _pending_rowset_set = other._pending_rowset_set;
@@ -46,7 +47,8 @@ PendingRowsetGuard::PendingRowsetGuard(PendingRowsetGuard&& other) noexcept {
 PendingRowsetGuard& PendingRowsetGuard::operator=(PendingRowsetGuard&& other) noexcept {
     CHECK(!_pending_rowset_set ||
           (_rowset_ids == other._rowset_ids && _pending_rowset_set == other._pending_rowset_set))
-            << _rowset_ids << ' ' << other._rowset_ids << ' ' << _pending_rowset_set << ' '
+            << _rowset_ids.size() << ' ' << other._rowset_ids.size() << ' ' << _pending_rowset_set
+            << ' '
             << other._pending_rowset_set;
     _rowset_ids = other._rowset_ids;
     _pending_rowset_set = other._pending_rowset_set;

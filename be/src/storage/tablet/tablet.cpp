@@ -1972,7 +1972,7 @@ Status Tablet::create_initial_rowset(const int64_t req_version) {
 
         RowsetWriterContext data_context;
         data_context.write_binlog_opt().mark_primary_writer();
-        RETURN_IF_ERROR(get_rowset_writer_context(data_context, tablet_schema()));
+        RETURN_IF_ERROR(get_rowset_writer_context(data_context, row_binlog_tablet_schema()));
         auto data_writer = DORIS_TRY(create_rowset_writer(data_context, false));
         group_rowset_writer->set_data_writer(std::move(data_writer));
 

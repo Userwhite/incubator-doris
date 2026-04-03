@@ -251,7 +251,7 @@ Status RowsetBuilder::init() {
 
     context.partial_update_info = _partial_update_info;
     _rowset_writer = DORIS_TRY(_tablet->create_rowset_writer(context, false));
-
+    _rowset_id = context.rowset_id;
     std::vector<RowsetId> tmp_pending_rowset_ids = {_rowset_id};
     tmp_pending_rowset_ids.resize(1 + _attach_rowset_ids.size());
     std::copy(_attach_rowset_ids.begin(), _attach_rowset_ids.end(),

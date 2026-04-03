@@ -328,7 +328,7 @@ public class ShowDataCommand extends ShowCommand {
                 localSegmentSize += mIndex.getLocalSegmentSize();
                 remoteIndexSize += mIndex.getRemoteIndexSize();
                 remoteSegmentSize += mIndex.getRemoteSegmentSize();
-                localBinlogSize += mIndex.getBinlogDataSize();
+                localBinlogSize += mIndex.getBinlogSize();
             }
 
             String indexName = table.getIndexNameById(indexId);

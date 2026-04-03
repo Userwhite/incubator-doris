@@ -1558,13 +1558,12 @@ public class PropertyAnalyzer {
         // check PROPERTIES_BINLOG_NEED_HISTORICAL_VALUE = "binlog.need_historical_value"
         if (properties.containsKey(PROPERTIES_BINLOG_NEED_HISTORICAL_VALUE)) {
             String needHistoricalValue = properties.get(PROPERTIES_BINLOG_NEED_HISTORICAL_VALUE);
-            try {
-                binlogConfigMap.put(PROPERTIES_BINLOG_NEED_HISTORICAL_VALUE,
-                        String.valueOf(Boolean.parseBoolean(needHistoricalValue)));
-                properties.remove(PROPERTIES_BINLOG_NEED_HISTORICAL_VALUE);
-            } catch (Exception e) {
+            if (!StringUtils.equalsAnyIgnoreCase(needHistoricalValue, "true", "false")) {
                 throw new AnalysisException("Invalid binlog need_historical_value value: " + needHistoricalValue);
             }
+            binlogConfigMap.put(PROPERTIES_BINLOG_NEED_HISTORICAL_VALUE,
+                    String.valueOf(Boolean.parseBoolean(needHistoricalValue)));
+            properties.remove(PROPERTIES_BINLOG_NEED_HISTORICAL_VALUE);
         }
 
 

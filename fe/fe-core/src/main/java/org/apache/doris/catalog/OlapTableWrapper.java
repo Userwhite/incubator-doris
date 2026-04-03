@@ -33,7 +33,7 @@ public class OlapTableWrapper extends OlapTable {
     protected final OlapTable originTable;
 
     protected OlapTableWrapper(OlapTable originTable, String wrapperName, List<Column> baseSchema, KeysType keysType) {
-        super(originTable.getId(), wrapperName + "_" + originTable.getName(), baseSchema,
+        super(originTable.getId(), wrapperName, baseSchema,
                 keysType, originTable.getPartitionInfo(), originTable.getDefaultDistributionInfo());
         this.originTable = originTable;
     }
