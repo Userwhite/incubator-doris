@@ -149,7 +149,7 @@ public class TabletsProcDir implements ProcDirInterface {
                     tabletInfo.add(FeConstants.null_string); // meta url
                     tabletInfo.add(FeConstants.null_string); // compaction status
                     tabletInfo.add(-1); // cooldown replica id
-		    tabletInfo.add(""); // cooldown meta id
+                    tabletInfo.add(""); // cooldown meta id
                     tabletInfo.add(-1L); // binlog data size
                     tabletInfo.add(-1L); // binlog file num
                     if (Config.isCloudMode()) {
