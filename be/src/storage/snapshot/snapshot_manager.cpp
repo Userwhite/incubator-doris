@@ -711,7 +711,7 @@ Status SnapshotManager::_create_snapshot_files(const TabletSharedPtr& ref_tablet
             break;
         }
 
-        if (!is_copy_binlog || !target_tablet->is_enable_binlog()) {
+        if (!is_copy_binlog || !target_tablet->enable_ccr_binlog()) {
             break;
         }
 
