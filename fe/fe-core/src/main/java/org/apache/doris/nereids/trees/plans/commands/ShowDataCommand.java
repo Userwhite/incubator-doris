@@ -92,6 +92,7 @@ public class ShowDataCommand extends ShowCommand {
                     .addColumn(new Column("DBName", ScalarType.createVarchar(20)))
                     .addColumn(new Column("DataSize", ScalarType.createVarchar(20)))
                     .addColumn(new Column("RecycleSize", ScalarType.createVarchar(20)))
+                    .addColumn(new Column("BinlogSize", ScalarType.createVarchar(20)))
                     .build();
 
     private static final ShowResultSetMetaData SHOW_INDEX_DATA_META_DATA =
@@ -431,7 +432,8 @@ public class ShowDataCommand extends ShowCommand {
         // Total
         if (!detailed) {
             totalRows.add(Arrays.asList("", "Total", DebugUtil.printByteWithUnit(totalSize),
-                    String.valueOf(totalReplicaCount), "", DebugUtil.printByteWithUnit(totalRemoteSize)));
+                    String.valueOf(totalReplicaCount), "", DebugUtil.printByteWithUnit(totalRemoteSize),
+                    DebugUtil.printByteWithUnit(totalBinlogSize)));
         } else {
             totalRows.add(Arrays.asList("", "Total", String.valueOf(totalReplicaCount), "",
                     DebugUtil.printByteWithUnit(totalSize), DebugUtil.printByteWithUnit(totalLocalSegmentSize),
@@ -584,7 +586,7 @@ public class ShowDataCommand extends ShowCommand {
         return toSql();
     }
 
-    // |DBName|DataSize|RecycleSize|
+    // |DBName|DataSize|RecycleSize|BinlogSize|
     private boolean getDbStatsByProperties() {
         if (properties == null) {
             return false;
@@ -599,6 +601,7 @@ public class ShowDataCommand extends ShowCommand {
             Map<String, Long> dbToDataSize = Env.getCurrentInternalCatalog().getUsedDataQuota();
             Map<Long, Pair<Long, Long>> dbToRecycleSize = Env.getCurrentRecycleBin().getDbToRecycleSize();
             Long total = 0L;
+            Long totalBinlogSize = 0L;
             Long totalRecycleSize = 0L;
             if (dbList == null) {
                 for (Map.Entry<String, Long> pair : dbToDataSize.entrySet()) {
@@ -606,11 +609,18 @@ public class ShowDataCommand extends ShowCommand {
                     if (db == null) {
                         continue;
                     }
+                    Long binlogSize = 0L;
+                    for (Table table : db.getTables()) {
+                        if (table instanceof OlapTable) {
+                            binlogSize += ((OlapTable) table).getBinlogSize();
+                        }
+                    }
                     Long recycleSize = dbToRecycleSize.getOrDefault(db.getId(), Pair.of(0L, 0L)).first;
                     List<String> result = Arrays.asList(db.getName(),
-                            String.valueOf(pair.getValue()), String.valueOf(recycleSize));
+                            String.valueOf(pair.getValue()), String.valueOf(recycleSize), String.valueOf(binlogSize));
                     totalRows.add(result);
                     total += pair.getValue();
+                    totalBinlogSize += binlogSize;
                     totalRecycleSize += recycleSize;
                     dbToRecycleSize.remove(db.getId());
                 }
@@ -618,7 +628,7 @@ public class ShowDataCommand extends ShowCommand {
                 // Append left database in recycle bin
                 for (Map.Entry<Long, Pair<Long, Long>> entry : dbToRecycleSize.entrySet()) {
                     List<String> result = Arrays.asList("NULL:" + entry.getKey(),
-                            "0", String.valueOf(entry.getValue().first));
+                            "0", String.valueOf(entry.getValue().first), "0");
                     totalRows.add(result);
                     totalRecycleSize += entry.getValue().first;
                 }
@@ -631,16 +641,24 @@ public class ShowDataCommand extends ShowCommand {
                     if (!dbList.contains(db.getName())) {
                         continue;
                     }
+                    Long binlogSize = 0L;
+                    for (Table table : db.getTables()) {
+                        if (table instanceof OlapTable) {
+                            binlogSize += ((OlapTable) table).getBinlogSize();
+                        }
+                    }
                     Long recycleSize = dbToRecycleSize.getOrDefault(db.getId(), Pair.of(0L, 0L)).first;
                     Long dataSize = dbToDataSize.getOrDefault(databaseName, 0L);
-                    List<String> result =
-                            Arrays.asList(db.getName(), String.valueOf(dataSize), String.valueOf(recycleSize));
+                    List<String> result = Arrays.asList(db.getName(), String.valueOf(dataSize),
+                            String.valueOf(recycleSize), String.valueOf(binlogSize));
                     totalRows.add(result);
                     total += dataSize;
+                    totalBinlogSize += binlogSize;
                     totalRecycleSize += recycleSize;
                 }
             }
-            List<String> result = Arrays.asList("total", String.valueOf(total), String.valueOf(totalRecycleSize));
+            List<String> result = Arrays.asList("total", String.valueOf(total), String.valueOf(totalRecycleSize),
+                    String.valueOf(totalBinlogSize));
             totalRows.add(result);
             return true;
         }

@@ -116,6 +116,9 @@ void doris_rowset_meta_to_cloud(RowsetMetaCloudPB* out, const RowsetMetaPB& in) 
     if (in.has_commit_tso()) {
         out->set_commit_tso(in.commit_tso());
     }
+    if (in.has_is_row_binlog()) {
+        out->set_is_row_binlog(in.is_row_binlog());
+    }
 }
 
 void doris_rowset_meta_to_cloud(RowsetMetaCloudPB* out, RowsetMetaPB&& in) {
@@ -197,6 +200,9 @@ void doris_rowset_meta_to_cloud(RowsetMetaCloudPB* out, RowsetMetaPB&& in) {
     }
     if (in.has_commit_tso()) {
         out->set_commit_tso(in.commit_tso());
+    }
+    if (in.has_is_row_binlog()) {
+        out->set_is_row_binlog(in.is_row_binlog());
     }
 }
 
@@ -290,6 +296,9 @@ void cloud_rowset_meta_to_doris(RowsetMetaPB* out, const RowsetMetaCloudPB& in) 
     if (in.has_commit_tso()) {
         out->set_commit_tso(in.commit_tso());
     }
+    if (in.has_is_row_binlog()) {
+        out->set_is_row_binlog(in.is_row_binlog());
+    }
 }
 
 void cloud_rowset_meta_to_doris(RowsetMetaPB* out, RowsetMetaCloudPB&& in) {
@@ -370,6 +379,9 @@ void cloud_rowset_meta_to_doris(RowsetMetaPB* out, RowsetMetaCloudPB&& in) {
     }
     if (in.has_commit_tso()) {
         out->set_commit_tso(in.commit_tso());
+    }
+    if (in.has_is_row_binlog()) {
+        out->set_is_row_binlog(in.is_row_binlog());
     }
 }
 
