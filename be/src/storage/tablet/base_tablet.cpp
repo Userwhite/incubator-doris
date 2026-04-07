@@ -43,12 +43,16 @@
 #include "storage/delete/delete_bitmap_calculator.h"
 #include "storage/index/primary_key_index.h"
 #include "storage/iterators.h"
+#include "storage/binlog.h"
 #include "storage/partial_update_info.h"
 #include "storage/rowid_conversion.h"
 #include "storage/rowset/beta_rowset.h"
+#include "storage/rowset/group_rowset_writer.h"
 #include "storage/rowset/rowset.h"
+#include "storage/rowset/rowset_factory.h"
 #include "storage/rowset/rowset_fwd.h"
 #include "storage/rowset/rowset_reader.h"
+#include "storage/rowset/rowset_writer_context.h"
 #include "storage/segment/column_reader.h"
 #include "storage/tablet/tablet_fwd.h"
 #include "storage/txn/txn_manager.h"
@@ -1404,6 +1408,8 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
     RowsetIdUnorderedSet rowset_ids_to_add;
     RowsetIdUnorderedSet rowset_ids_to_del;
     RowsetSharedPtr rowset = txn_info->rowset;
+    RowsetSharedPtr row_binlog_rowset;
+    bool build_row_binlog = false;
     int64_t cur_version = rowset->start_version();
 
     std::unique_ptr<RowsetWriter> transient_rs_writer;
@@ -1513,6 +1519,74 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         RETURN_IF_ERROR(token->wait());
     }
 
+    // Publish-phase partial update may generate transient segments. If row binlog is enabled for
+    // this txn (row binlog rowset attached), we need to build row binlog segments together with
+    // transient data segments:
+    // 1) create a transient row binlog writer that appends to the same version row binlog rowset
+    // 2) pre-allocate per-row LSNs for each transient segment and register them in binlog options
+    // 3) wrap both writers into a GroupRowsetWriter so calc_delete_bitmap writes to both.
+    if (is_partial_update) {
+        row_binlog_rowset = txn_info->row_binlog_rowset;
+        if (row_binlog_rowset == nullptr) {
+            for (const auto& rs : txn_info->attach_rowsets) {
+                if (rs != nullptr && rs->rowset_meta() != nullptr && rs->rowset_meta()->is_row_binlog()) {
+                    row_binlog_rowset = rs;
+                    break;
+                }
+            }
+        }
+        build_row_binlog = (row_binlog_rowset != nullptr);
+    }
+
+    if (build_row_binlog) {
+        DCHECK(transient_rs_writer != nullptr);
+
+        // Create transient row binlog writer for publish-phase segment appending.
+        auto transient_row_binlog_writer = DORIS_TRY(self->create_transient_rowset_writer(
+                *row_binlog_rowset, txn_info->partial_update_info, txn_expiration));
+
+        // Prepare source MOW context for historical row retrieval in binlog writer.
+        auto& data_ctx = const_cast<RowsetWriterContext&>(transient_rs_writer->context());
+        data_ctx.mow_context = std::make_shared<MowContext>(
+                cur_version - 1, txn_id, std::make_shared<RowsetIdUnorderedSet>(), specified_rowsets,
+                nullptr);
+
+        auto& binlog_ctx =
+                const_cast<RowsetWriterContext&>(transient_row_binlog_writer->context());
+        auto& cfg = binlog_ctx.write_binlog_opt().write_binlog_config();
+        cfg.source_tablet_schema = data_ctx.tablet_schema;
+        cfg.source_partial_update_info = data_ctx.partial_update_info;
+        cfg.source_mow_context = data_ctx.mow_context;
+        cfg.source_is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
+        cfg.source_write_type = data_ctx.write_type;
+
+        // Keep binlog writer context self-sufficient for historical row retrieval.
+        binlog_ctx.mow_context = data_ctx.mow_context;
+        binlog_ctx.partial_update_info = data_ctx.partial_update_info;
+
+        // Allocate per-row LSNs for each transient segment.
+        const TabletSchemaSPtr& row_binlog_schema = row_binlog_rowset->tablet_schema();
+        int64_t db_id = row_binlog_schema->db_id();
+        int64_t table_id = row_binlog_schema->table_id();
+        int32_t transient_segment_start_id = cast_set<int32_t>(row_binlog_rowset->num_segments());
+        for (int32_t seg_idx = 0; seg_idx < cast_set<int32_t>(segments.size()); ++seg_idx) {
+            std::shared_ptr<std::vector<int128_t>> lsn_ids;
+            RETURN_IF_ERROR(allocate_row_binlog_lsn_ids(db_id, table_id, row_binlog_schema,
+                                                       segments[seg_idx]->num_rows(), &lsn_ids));
+            binlog_ctx.write_binlog_opt().write_binlog_config().insert_seg_lsn(
+                    transient_segment_start_id + seg_idx, std::move(lsn_ids));
+        }
+
+        // Wrap two transient writers into a group writer for dual flush/build.
+        RowsetWriterSharedPtr data_writer_sp(std::move(transient_rs_writer));
+        RowsetWriterSharedPtr row_binlog_writer_sp(std::move(transient_row_binlog_writer));
+        std::unique_ptr<GroupRowsetWriter> group_writer;
+        RETURN_IF_ERROR(RowsetFactory::create_empty_group_rowset_writer(&group_writer));
+        group_writer->set_data_writer(data_writer_sp);
+        group_writer->set_row_binlog_writer(row_binlog_writer_sp);
+        transient_rs_writer = std::move(group_writer);
+    }
+
     // When there is only one segment, it will be calculated in the current thread.
     // Otherwise, it will be submitted to the thread pool for calculation.
     if (segments.size() <= 1) {
@@ -1556,7 +1630,17 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         // build rowset writer and merge transient rowset
         RETURN_IF_ERROR(transient_rs_writer->flush());
         RowsetSharedPtr transient_rowset;
-        RETURN_IF_ERROR(transient_rs_writer->build(transient_rowset));
+        RowsetSharedPtr transient_row_binlog;
+        if (build_row_binlog) {
+            auto* group_rowset_writer = typeid_cast<GroupRowsetWriter*>(transient_rs_writer.get());
+            DCHECK(group_rowset_writer != nullptr);
+            std::vector<RowsetSharedPtr> waited_build_rowsets(2);
+            RETURN_IF_ERROR(group_rowset_writer->build_rowsets(waited_build_rowsets));
+            transient_rowset = waited_build_rowsets[0];
+            transient_row_binlog = waited_build_rowsets[1];
+        } else {
+            RETURN_IF_ERROR(transient_rs_writer->build(transient_rowset));
+        }
         auto old_segments = rowset->num_segments();
         rowset->merge_rowset_meta(*transient_rowset->rowset_meta());
         auto new_segments = rowset->num_segments();
@@ -1564,6 +1648,19 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
            << " flush rowset (old segment num: " << old_segments
            << ", new segment num: " << new_segments << ")"
            << ", cost:" << watch.get_elapse_time_us() - t4 << "(us)";
+
+        if (build_row_binlog) {
+            DCHECK(row_binlog_rowset != nullptr);
+            old_segments = row_binlog_rowset->num_segments();
+            row_binlog_rowset->merge_rowset_meta(*transient_row_binlog->rowset_meta());
+            new_segments = row_binlog_rowset->num_segments();
+            ss << ", " << txn_info->partial_update_info->partial_update_mode_str()
+               << " flush row binlog (old segment num: " << old_segments
+               << ", new segment num: " << new_segments << ")";
+
+            SegmentLoader::instance()->erase_segments(row_binlog_rowset->rowset_id(),
+                                                     row_binlog_rowset->num_segments());
+        }
 
         // update the shared_ptr to new bitmap, which is consistent with current rowset.
         txn_info->delete_bitmap = delete_bitmap;
@@ -1574,8 +1671,24 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
     // `binlog_delvec` records delete bitmap deltas that should be persisted separately for binlog.
     // It is optional and only populated when the writer path enables it.
     if (txn_info->binlog_delvec != nullptr) {
-        // `delete_bitmap` is the final delta computed for this txn publish.
-        *(txn_info->binlog_delvec) = DeleteBitmap(*delete_bitmap);
+        if (!build_row_binlog) {
+            // `delete_bitmap` is the final delta computed for this txn publish.
+            *(txn_info->binlog_delvec) = DeleteBitmap(*delete_bitmap);
+        } else {
+            DCHECK(row_binlog_rowset != nullptr);
+            txn_info->binlog_delvec->delete_bitmap.clear();
+            const RowsetId& cur_build_rid = txn_info->rowset->rowset_id();
+            const RowsetId& binlog_rid = row_binlog_rowset->rowset_id();
+            for (const auto& [key, bitmap] : delete_bitmap->delete_bitmap) {
+                const RowsetId& rid = std::get<0>(key);
+                const DeleteBitmap::SegmentId& sid = std::get<1>(key);
+                if (rid != cur_build_rid) {
+                    continue;
+                }
+                txn_info->binlog_delvec->merge({binlog_rid, sid, cast_set<uint64_t>(cur_version)},
+                                               bitmap);
+            }
+        }
     }
 
     size_t total_rows = std::accumulate(

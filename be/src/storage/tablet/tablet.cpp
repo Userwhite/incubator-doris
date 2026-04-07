@@ -2063,24 +2063,6 @@ Status Tablet::create_initial_rowset(const int64_t req_version) {
         auto row_binlog_writer = DORIS_TRY(create_rowset_writer(row_binlog_context, false));
         group_rowset_writer->set_row_binlog_writer(std::move(row_binlog_writer));
 
-        // Decouple row-binlog writer from the source data writer context: fill source info
-        // from its own configuration at init time.
-        {
-            const auto& data_ctx = group_rowset_writer->data_writer()->context();
-            auto& binlog_ctx = const_cast<RowsetWriterContext&>(
-                    group_rowset_writer->row_binlog_writer()->context());
-            auto& cfg = binlog_ctx.write_binlog_opt().write_binlog_config();
-            cfg.source_tablet_schema = data_ctx.tablet_schema;
-            cfg.source_partial_update_info = data_ctx.partial_update_info;
-            cfg.source_mow_context = data_ctx.mow_context;
-            cfg.source_is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
-            cfg.source_write_type = data_ctx.write_type;
-
-            // Keep binlog writer context self-sufficient for historical row retrieval.
-            binlog_ctx.mow_context = data_ctx.mow_context;
-            binlog_ctx.partial_update_info = data_ctx.partial_update_info;
-        }
-
         RETURN_IF_ERROR(group_rowset_writer->flush_rowsets());
 
         RowsetSharedPtr new_data_rowset;
@@ -2134,6 +2116,18 @@ Result<std::unique_ptr<RowsetWriter>> Tablet::create_transient_rowset_writer(
     context.write_type = DataWriteType::TYPE_DIRECT;
     context.partial_update_info = std::move(partial_update_info);
     context.is_transient_rowset_writer = true;
+
+    // In publish phase, partial update may create transient rowsets.
+    // If row binlog is enabled, transient writers should also carry correct binlog writer marks
+    // so that writer context (schema hash/path/need_before) is initialized properly.
+    if (enable_row_binlog()) {
+        if (rowset.rowset_meta() != nullptr && rowset.rowset_meta()->is_row_binlog()) {
+            context.write_binlog_opt().mark_binlog_writer();
+        } else {
+            context.write_binlog_opt().mark_primary_writer();
+        }
+    }
+
     return create_transient_rowset_writer(context, rowset.rowset_id())
             .transform([&](auto&& writer) {
                 writer->set_segment_start_id(cast_set<int32_t>(rowset.num_segments()));

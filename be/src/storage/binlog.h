@@ -19,10 +19,16 @@
 
 #include <fmt/format.h>
 
+#include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
+#include "common/status.h"
+#include "exec/sink/autoinc_buffer.h"
 #include "storage/olap_common.h"
+#include "storage/tablet/tablet_schema.h"
 
 namespace doris {
 
@@ -115,5 +121,58 @@ inline bool starts_with_binlog_meta(const std::string_view str) {
 inline std::string get_binlog_data_key_from_meta_key(const std::string_view meta_key) {
     // like "binlog_meta_6943f1585fe834b5-e542c2b83a21d0b7" => "binlog_data-6943f1585fe834b5-e542c2b83a21d0b7"
     return fmt::format("{}data_{}", kBinlogPrefix, meta_key.substr(kBinlogMetaPrefix.length()));
+}
+
+// Allocate per-row LSNs for row binlog writing.
+//
+// NOTE:
+// - The allocator lives in FE (AutoIncrementGenerator) and is fetched via GlobalAutoIncBuffers.
+// - Binlog LSN is NOT a user-visible AUTO_INCREMENT column, but it still reuses the allocator.
+// - Returns `nullptr` when `num_rows == 0`.
+inline Status allocate_row_binlog_lsn_ids(int64_t db_id, int64_t table_id,
+                                         const TabletSchemaSPtr& row_binlog_schema,
+                                         size_t num_rows,
+                                         std::shared_ptr<std::vector<int128_t>>* lsn_ids) {
+    if (lsn_ids == nullptr) {
+        return Status::InternalError<false>("lsn_ids output is null");
+    }
+    if (num_rows == 0) {
+        *lsn_ids = nullptr;
+        return Status::OK();
+    }
+    if (row_binlog_schema == nullptr) {
+        return Status::InternalError<false>("row binlog schema is null");
+    }
+
+    static constexpr const char* kLsnColName = "__DORIS_BINLOG_LSN__";
+    int32_t lsn_cid = row_binlog_schema->field_index(kLsnColName);
+    if (lsn_cid < 0) {
+        return Status::InternalError<false>(
+                fmt::format("row binlog schema missing {}", kLsnColName));
+    }
+    int64_t lsn_col_uid = row_binlog_schema->column(lsn_cid).unique_id();
+
+    auto buffer = GlobalAutoIncBuffers::GetInstance()->get_auto_inc_buffer(db_id, table_id, lsn_col_uid);
+    std::vector<std::pair<int64_t, size_t>> ranges;
+    auto st = buffer->sync_request_ids(num_rows, &ranges);
+    if (!st.ok()) {
+        return st;
+    }
+
+    auto ids = std::make_shared<std::vector<int128_t>>();
+    ids->reserve(num_rows);
+    for (const auto& [start, length] : ranges) {
+        for (size_t i = 0; i < length; ++i) {
+            ids->push_back(static_cast<int128_t>(start + static_cast<int64_t>(i)));
+        }
+    }
+    if (ids->size() != num_rows) {
+        return Status::InternalError<false>(
+                fmt::format("allocate row binlog lsn size mismatch: {} vs {}", ids->size(),
+                            num_rows));
+    }
+
+    *lsn_ids = std::move(ids);
+    return Status::OK();
 }
 } // namespace doris

@@ -34,6 +34,7 @@
 #include "core/column/column_string.h"
 #include "core/column/columns_number.h"
 #include "core/data_type/data_type.h"
+#include "core/string_ref.h"
 #include "core/block/column_with_type_and_name.h"
 #include "storage/rowset/rowset_reader_context.h"
 #include "storage/tablet/tablet_meta.h"
@@ -167,7 +168,7 @@ Status PrimaryKeyModelRowRetriever::build_before_block(Block* before_block,
     Block old_value_block = tablet_schema->create_block_by_cids(value_cids);
     CHECK_EQ(value_cids.size(), old_value_block.columns());
 
-    bool has_row_column = tablet_schema->store_row_column();
+    bool has_row_column = tablet_schema->has_row_store_for_all_columns();
     // key: logical row index in current batch; value: index in old_value_block
     std::map<uint32_t, uint32_t> read_index;
     size_t read_idx = 0;
@@ -295,7 +296,8 @@ void PrimaryKeyModelRowRetriever::_maybe_invalid_row_cache(const std::string& ke
     // Just invalid row cache for simplicity, since the rowset is not visible at present.
     // If we update/insert cache, if load failed rowset will not be visible but cached data
     // will be visible, and lead to inconsistency.
-    if (!config::disable_storage_row_cache && _context.tablet_schema->store_row_column() &&
+    if (!config::disable_storage_row_cache &&
+        _context.tablet_schema->has_row_store_for_all_columns() &&
         _context.write_type == DataWriteType::TYPE_DIRECT) {
         // invalidate cache
         RowCache::instance()->erase({static_cast<int64_t>(_context.tablet->tablet_id()), key});
@@ -317,7 +319,7 @@ Status PrimaryKeyModelRowRetriever::_fill_missing_columns(MutableColumns& mutabl
     const auto& cids_missing = _context.partial_update_info->missing_cids;
     Block old_value_block = tablet_schema->create_block_by_cids(cids_missing);
     CHECK_EQ(cids_missing.size(), old_value_block.columns());
-    bool has_row_column = tablet_schema->store_row_column();
+    bool has_row_column = tablet_schema->has_row_store_for_all_columns();
     // record real pos, key is input line num, value is old_block line num
     std::map<uint32_t, uint32_t> read_index;
     size_t read_idx = 0;
@@ -372,10 +374,9 @@ Status PrimaryKeyModelRowRetriever::_fill_missing_columns(MutableColumns& mutabl
             if (column.has_default_value()) {
                 const auto& default_value =
                         _context.partial_update_info->default_values[i];
-                ReadBuffer rb(const_cast<char*>(default_value.c_str()),
-                                          default_value.size());
-                RETURN_IF_ERROR(old_value_block.get_by_position(i).type->from_string(
-                        rb, mutable_default_value_columns[i].get()));
+                StringRef str(default_value.data(), default_value.size());
+                RETURN_IF_ERROR(old_value_block.get_by_position(i).type->get_serde()->default_from_string(
+                        str, *mutable_default_value_columns[i]));
             }
         }
     }

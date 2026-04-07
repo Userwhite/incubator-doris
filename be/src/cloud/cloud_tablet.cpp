@@ -789,6 +789,17 @@ Result<std::unique_ptr<RowsetWriter>> CloudTablet::create_transient_rowset_write
     context.write_type = DataWriteType::TYPE_DIRECT;
     context.partial_update_info = std::move(partial_update_info);
     context.is_transient_rowset_writer = true;
+
+    // Publish phase may create transient rowsets. If row binlog is enabled, transient writers should
+    // also carry correct binlog writer marks so RowsetWriterContext is initialized properly.
+    if (enable_row_binlog()) {
+        if (rowset.rowset_meta() != nullptr && rowset.rowset_meta()->is_row_binlog()) {
+            context.write_binlog_opt().mark_binlog_writer();
+        } else {
+            context.write_binlog_opt().mark_primary_writer();
+        }
+    }
+
     context.rowset_id = rowset.rowset_id();
     context.tablet_id = tablet_id();
     context.index_id = index_id();
