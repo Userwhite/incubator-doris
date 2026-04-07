@@ -476,7 +476,7 @@ public class CreateReplicaTask extends AgentTask {
                 tRowBinlogColumns = new ArrayList<>();
                 for (int i = 0; i < rowBinlogColumns.size(); i++) {
                     Column column = rowBinlogColumns.get(i);
-                    TColumn tColumn = column.toThrift();
+                    TColumn tColumn = ColumnToThrift.toThrift(column);
                     tColumn.setVisible(column.isVisible());
                     tRowBinlogColumns.add(tColumn);
                 }
