@@ -29,6 +29,8 @@
 #include <string>
 #include <vector>
 
+#include <mutex>
+
 #include "common/status.h" // Status
 #include "storage/index/index_file_writer.h"
 #include "storage/olap_define.h"
@@ -42,10 +44,15 @@ namespace doris {
 class Block;
 class IOlapColumnDataAccessor;
 class OlapBlockDataConvertor;
+class PartialUpdateInfo;
+struct MowContext;
 
 // TODO(lingbin): Should be a conf that can be dynamically adjusted, or a member in the context
 const uint32_t MAX_SEGMENT_SIZE = static_cast<uint32_t>(OLAP_MAX_COLUMN_SEGMENT_FILE_SIZE *
                                                         OLAP_COLUMN_FILE_SEGMENT_SIZE_SCALE);
+
+static constexpr const char* BINLOG_LSN_COL = "__DORIS_BINLOG_LSN__";
+
 class DataDir;
 class MemTracker;
 class ShortKeyIndexBuilder;
@@ -73,6 +80,40 @@ struct SegmentWriterOptions {
     RowsetWriterContext* rowset_ctx = nullptr;
     DataWriteType write_type = DataWriteType::TYPE_DEFAULT;
     std::shared_ptr<MowContext> mow_ctx;
+};
+
+struct SegmentWriteBinlogOptions {
+public:
+    bool write_before = false;
+
+    // Source (data writer) information needed for building row-binlog blocks.
+    // This must be set by the row-binlog writer itself (typically during initialization),
+    // and MUST NOT depend on the source data writer's RowsetWriterContext pointer.
+    TabletSchemaSPtr source_tablet_schema = nullptr;
+    std::shared_ptr<PartialUpdateInfo> source_partial_update_info;
+    std::shared_ptr<MowContext> source_mow_context;
+    bool source_is_transient_rowset_writer = false;
+    DataWriteType source_write_type = DataWriteType::TYPE_DEFAULT;
+
+    void insert_seg_lsn(int64_t seg_id, std::shared_ptr<std::vector<int128_t>> lsn_ids) {
+        std::lock_guard<std::mutex> l(_mutex);
+        seg_id_to_lsn_ids.emplace(seg_id, lsn_ids);
+    }
+
+    void remove_seg(int64_t seg_id) {
+        std::lock_guard<std::mutex> l(_mutex);
+        seg_id_to_lsn_ids.erase(seg_id);
+    }
+
+    std::shared_ptr<const std::vector<int128_t>> get_seg_lsn(int64_t seg_id) {
+        std::lock_guard<std::mutex> l(_mutex);
+        DCHECK(seg_id_to_lsn_ids.contains(seg_id));
+        return seg_id_to_lsn_ids[seg_id];
+    }
+
+private:
+    std::mutex _mutex;
+    std::map<int64_t, std::shared_ptr<std::vector<int128_t>>> seg_id_to_lsn_ids;
 };
 
 using TabletSharedPtr = std::shared_ptr<Tablet>;

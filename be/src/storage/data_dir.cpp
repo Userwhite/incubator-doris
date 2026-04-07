@@ -561,7 +561,8 @@ Status DataDir::load() {
             Status commit_txn_status = _engine.txn_manager()->commit_txn(
                     _meta, rowset_meta->partition_id(), rowset_meta->txn_id(),
                     rowset_meta->tablet_id(), rowset_meta->tablet_uid(), rowset_meta->load_id(),
-                    rowset, _engine.pending_local_rowsets().add(rowset_meta->rowset_id()), true);
+                    rowset, _engine.pending_local_rowsets().add(rowset_meta->rowset_id()), true,
+                    nullptr, nullptr);
             if (commit_txn_status || commit_txn_status.is<PUSH_TRANSACTION_ALREADY_EXIST>()) {
                 LOG(INFO) << "successfully to add committed rowset: " << rowset_meta->rowset_id()
                           << " to tablet: " << rowset_meta->tablet_id()
@@ -606,6 +607,80 @@ Status DataDir::load() {
             ++invalid_rowset_counter;
         }
     }
+
+    // Load row binlog metas (visible / committed) from meta store.
+    // - VISIBLE: attach to tablet for path gc / delete bitmap load
+    // - COMMITTED: attach to TxnManager so publish path can consume it
+    int64_t row_binlog_cnt {0};
+    int64_t invalid_row_binlog_cnt {0};
+    auto load_row_binlog_meta_func = [this, &row_binlog_cnt, &invalid_row_binlog_cnt](
+                                             std::string_view key, std::string_view val,
+                                             bool /*need_check*/) -> bool {
+        RowsetMetaSharedPtr rowset_meta(new RowsetMeta());
+        bool parsed = rowset_meta->init(val);
+        if (!parsed) {
+            LOG(WARNING) << "parse row binlog meta string failed for key: " << key;
+            ++invalid_row_binlog_cnt;
+            return true;
+        }
+        if (!rowset_meta->is_row_binlog()) {
+            LOG(WARNING) << "row binlog meta key but rowset meta is not row binlog, key: " << key;
+            ++invalid_row_binlog_cnt;
+            return true;
+        }
+
+        TabletSharedPtr tablet = _engine.tablet_manager()->get_tablet(rowset_meta->tablet_id());
+        if (!tablet) {
+            return true;
+        }
+        if (tablet->tablet_uid() != rowset_meta->tablet_uid()) {
+            ++invalid_row_binlog_cnt;
+            return true;
+        }
+        if (!rowset_meta->tablet_schema()) {
+            rowset_meta->set_tablet_schema(tablet->tablet_schema());
+        }
+
+        RowsetSharedPtr row_binlog_rowset;
+        Status create_status = tablet->create_rowset(rowset_meta, &row_binlog_rowset);
+        if (!create_status.ok()) {
+            LOG(WARNING) << "failed to create row binlog rowset from meta. key=" << key
+                         << ", status=" << create_status;
+            ++invalid_row_binlog_cnt;
+            return true;
+        }
+
+        if (rowset_meta->rowset_state() == RowsetStatePB::VISIBLE) {
+            Status st = tablet->add_row_binlog_rowset(row_binlog_rowset);
+            if (!st.ok() && !st.is<PUSH_VERSION_ALREADY_EXIST>()) {
+                LOG(WARNING) << "add row binlog rowset to tablet failed, key=" << key
+                             << ", status=" << st;
+                ++invalid_row_binlog_cnt;
+            } else {
+                ++row_binlog_cnt;
+            }
+        } else if (rowset_meta->rowset_state() == RowsetStatePB::COMMITTED) {
+            Status st = _engine.txn_manager()->attach_row_binlog_rowset(
+                    rowset_meta->partition_id(), rowset_meta->txn_id(), rowset_meta->tablet_id(),
+                    rowset_meta->tablet_uid(), row_binlog_rowset);
+            if (!st.ok() && !st.is<ErrorCode::TRANSACTION_NOT_EXIST>()) {
+                LOG(WARNING) << "attach row binlog rowset failed, key=" << key
+                             << ", status=" << st;
+                ++invalid_row_binlog_cnt;
+            } else {
+                ++row_binlog_cnt;
+            }
+        }
+        return true;
+    };
+
+    MonotonicStopWatch rb_timer;
+    rb_timer.start();
+    RETURN_IF_ERROR(RowsetMetaManager::traverse_row_binlog_metas(_meta, load_row_binlog_meta_func));
+    rb_timer.stop();
+    LOG(INFO) << "load row binlog meta finished, cost: " << rb_timer.elapsed_time_milliseconds()
+              << " ms, data dir: " << _path << ", count: " << row_binlog_cnt
+              << ", invalid: " << invalid_row_binlog_cnt;
 
     int64_t dbm_cnt {0};
     int64_t unknown_dbm_cnt {0};
@@ -775,6 +850,9 @@ void DataDir::_perform_rowset_gc(const std::string& tablet_schema_hash_path) {
     tablet->traverse_rowsets(
             [&rowsets_in_version_map](auto& rs) { rowsets_in_version_map.insert(rs->rowset_id()); },
             true);
+    for (const auto& [_, rb_meta] : tablet->tablet_meta()->all_row_binlog_rs_metas()) {
+        rowsets_in_version_map.insert(rb_meta->rowset_id());
+    }
 
     DBUG_EXECUTE_IF("DataDir::_perform_rowset_gc.simulation.slow", {
         auto target_tablet_id = dp->param<int64_t>("tablet_id", -1);

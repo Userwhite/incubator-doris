@@ -16,17 +16,16 @@
 // under the License.
 
 #include "storage/rowset/group_rowset_writer.h"
-
 #include "storage/rowset/beta_rowset_writer.h"
+#include "storage/segment/segment_writer.h"
 
 namespace doris {
 
 void GroupRowsetWriter::set_data_writer(const RowsetWriterSharedPtr& txn_rowset_writer) {
-    _txn_rowset_writer = std::dynamic_pointer_cast<BaseBetaRowsetWriter>(txn_rowset_writer);
+    _txn_rowset_writer = txn_rowset_writer;
 }
 
-void GroupRowsetWriter::set_row_binlog_writer(
-        const RowsetWriterSharedPtr& row_binlog_rowset_writer) {
+void GroupRowsetWriter::set_row_binlog_writer(const RowsetWriterSharedPtr& row_binlog_rowset_writer) {
     _row_binlog_rowset_writer = row_binlog_rowset_writer;
 }
 
@@ -39,13 +38,27 @@ Status GroupRowsetWriter::flush_rowsets() {
 }
 
 Status GroupRowsetWriter::build_rowsets(std::vector<RowsetSharedPtr>& rowsets) {
-    if (rowsets.size() < 2) {
-        return Status::InvalidArgument(
-                "GroupRowsetWriter::build_rowsets expects at least 2 rowset slots");
-    }
-    RETURN_IF_ERROR(_txn_rowset_writer->build(rowsets[0]));
+    RETURN_IF_ERROR(_txn_rowset_writer->build(rowsets.at(0)));
     if (_row_binlog_rowset_writer) {
-        RETURN_IF_ERROR(_row_binlog_rowset_writer->build(rowsets[1]));
+        RETURN_IF_ERROR(_row_binlog_rowset_writer->build(rowsets.at(1)));
+    }
+    return Status::OK();
+}
+
+Status GroupRowsetWriter::flush_memtable(Block* block, int32_t segment_id, int64_t* flush_size) {
+    if (!_row_binlog_rowset_writer) {
+        return _txn_rowset_writer->flush_memtable(block, segment_id, flush_size);
+    }
+
+    RETURN_IF_ERROR(_txn_rowset_writer->flush_memtable(block, segment_id, flush_size));
+    // Keep legacy behavior: the last flush overwrites `flush_size`.
+    return _row_binlog_rowset_writer->flush_memtable(block, segment_id, flush_size);
+}
+
+Status GroupRowsetWriter::flush_single_block(const Block* block) {
+    RETURN_IF_ERROR(_txn_rowset_writer->flush_single_block(block));
+    if (_row_binlog_rowset_writer) {
+        RETURN_IF_ERROR(_row_binlog_rowset_writer->flush_single_block(block));
     }
     return Status::OK();
 }

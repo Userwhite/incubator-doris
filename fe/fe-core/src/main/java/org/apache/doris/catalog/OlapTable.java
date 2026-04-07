@@ -2330,7 +2330,7 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         return getBinlogConfig().isEnableForStreaming();
     }
 
-    public void createNewRowBinlogMeta(IdGeneratorBuffer idGeneratorBuffer) {
+    public void createNewRowBinlogMeta(IdGeneratorBuffer idGeneratorBuffer, long dbId) {
         writeLock();
         try {
             List<Column> schema = generateTableRowBinlogSchema();
@@ -2340,6 +2340,19 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
                     this.getBaseIndexMeta().getShortKeyColumnCount(), TStorageType.COLUMN,
                     KeysType.DUP_KEYS, null, null, getQualifiedDbName(), null);
             rowBinlogMeta.initSchemaColumnUniqueId();
+
+            // Initialize table-level auto-increment generator for binlog LSN.
+            // Binlog<Row> uses __DORIS_BINLOG_LSN__ column in row binlog schema to allocate LSN.
+            for (Column column : rowBinlogMeta.getSchema(true)) {
+                if (column.getName().equalsIgnoreCase(Column.BINLOG_LSN_COL)) {
+                    Preconditions.checkState(column.isAutoInc(),
+                            "binlog lsn column must be auto increment: " + column.getName());
+                    autoIncrementGenerator = new AutoIncrementGenerator(dbId, id,
+                            column.getUniqueId(), column.getAutoIncInitValue());
+                    autoIncrementGenerator.setEditLog(Env.getCurrentEnv().getEditLog());
+                    break;
+                }
+            }
             rowBinlogMeta.setRowBinlogIndexId(indexId);
             this.setRowBinlogMeta(rowBinlogMeta, BinlogUtils.wrapBinlogName(this.name));
         } finally {
@@ -2405,7 +2418,7 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         }
 
         tableRowBinlogSchema.add(new ColumnDef(Column.BINLOG_LSN_COL, ScalarType.createType(PrimitiveType.LARGEINT),
-                false, AggregateType.NONE, false, -1, ColumnDef.DefaultValue.NOT_SET,
+                false, AggregateType.NONE, false, 1, ColumnDef.DefaultValue.NOT_SET,
                 "doris binlog lsn column", false).toColumn());
         tableRowBinlogSchema.add(new ColumnDef(Column.BINLOG_OPERATION_COL,
                 ScalarType.createType(PrimitiveType.BIGINT), false, AggregateType.NONE, true, -1,

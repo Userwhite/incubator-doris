@@ -30,6 +30,7 @@
 #include "common/status.h"
 #include "core/block/block.h"
 #include "io/fs/file_writer.h" // IWYU pragma: keep
+#include "exec/sink/autoinc_buffer.h"
 #include "load/memtable/memtable.h"
 #include "load/memtable/memtable_flush_executor.h"
 #include "load/memtable/memtable_memory_limiter.h"
@@ -37,7 +38,9 @@
 #include "runtime/memory/mem_tracker.h"
 #include "service/backend_options.h"
 #include "storage/rowset/beta_rowset_writer.h"
+#include "storage/rowset/group_rowset_writer.h"
 #include "storage/rowset/rowset_writer.h"
+#include "storage/segment/segment_writer.h" // BINLOG_LSN_COL
 #include "storage/schema_change/schema_change.h"
 #include "storage/storage_engine.h"
 #include "storage/tablet/tablet_schema.h"
@@ -162,7 +165,36 @@ Status MemTableWriter::_flush_memtable_async() {
         memtable->update_mem_type(MemType::WRITE_FINISHED);
         _freezed_mem_tables.push_back(memtable);
     }
-    return _flush_token->submit(memtable);
+
+    std::shared_ptr<std::vector<int128_t>> lsn_ids = nullptr;
+    if (_rowset_writer->context().write_binlog_opt().need_build_binlog()) {
+        auto* group_rowset_writer = typeid_cast<GroupRowsetWriter*>(_rowset_writer.get());
+        DCHECK(group_rowset_writer != nullptr);
+        const TabletSchemaSPtr& row_binlog_schema =
+                group_rowset_writer->row_binlog_writer()->context().tablet_schema;
+        DCHECK(row_binlog_schema != nullptr);
+
+        int32_t lsn_cid = row_binlog_schema->field_index(BINLOG_LSN_COL);
+        CHECK(lsn_cid >= 0) << "row binlog schema missing __DORIS_BINLOG_LSN__";
+        int64_t lsn_col_uid = row_binlog_schema->column(lsn_cid).unique_id();
+
+        auto buffer = GlobalAutoIncBuffers::GetInstance()->get_auto_inc_buffer(
+                _req.table_schema_param->db_id(), _req.table_schema_param->table_id(), lsn_col_uid);
+        std::vector<std::pair<int64_t, size_t>> ranges;
+        RETURN_IF_ERROR(buffer->sync_request_ids(memtable->raw_rows(), &ranges));
+
+        lsn_ids = std::make_shared<std::vector<int128_t>>();
+        lsn_ids->reserve(memtable->raw_rows());
+        for (const auto& [start, length] : ranges) {
+            for (size_t i = 0; i < length; i++) {
+                lsn_ids->push_back(static_cast<int128_t>(start + static_cast<int64_t>(i)));
+            }
+        }
+        DCHECK(lsn_ids->size() == memtable->raw_rows()) << lsn_ids->size() << " vs "
+                                                       << memtable->raw_rows();
+    }
+
+    return _flush_token->submit(memtable, lsn_ids);
 }
 
 Status MemTableWriter::flush_async() {

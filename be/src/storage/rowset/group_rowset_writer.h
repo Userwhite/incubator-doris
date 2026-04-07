@@ -20,6 +20,7 @@
 #include "storage/rowset/rowset_writer.h"
 
 namespace doris {
+class Block;
 class GroupRowsetWriter : public RowsetWriter {
 public:
     GroupRowsetWriter() = default;
@@ -63,6 +64,10 @@ public:
     // explicit flush all buffered rows into segment file.
     // note that `add_row` could also trigger flush when certain conditions are met
     Status flush() override { return flush_rowsets(); }
+
+    Status flush_memtable(Block* block, int32_t segment_id, int64_t* flush_size) override;
+
+    Status flush_single_block(const Block* block) override;
 
     // GroupRowsetWriter does not support build a single rowset; its build is
     // delegated to underlying writers.

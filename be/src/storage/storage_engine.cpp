@@ -917,6 +917,9 @@ Status StorageEngine::start_trash_sweep(double* usage, bool ignore_guard) {
     // clean unused binlog metas in OlapMeta
     _clean_unused_binlog_metas();
 
+    // clean unused row binlog metas in OlapMeta
+    _clean_unused_row_binlog_metas();
+
     // cleand unused delete bitmap for deleted tablet
     _clean_unused_delete_bitmap();
 
@@ -1054,6 +1057,66 @@ void StorageEngine::_clean_unused_binlog_metas() {
         LOG(INFO) << "remove " << unused_binlog_key_suffixes.size()
                   << " invalid binlog meta from dir: " << data_dir->path();
         unused_binlog_key_suffixes.clear();
+    }
+}
+
+void StorageEngine::_clean_unused_row_binlog_metas() {
+    std::vector<std::string> unused_row_binlog_key_suffixes;
+    auto unused_row_binlog_collector = [this, &unused_row_binlog_key_suffixes](
+                                               std::string_view key, std::string_view value,
+                                               bool /*need_check*/) -> bool {
+        RowsetMetaSharedPtr rowset_meta(new RowsetMeta());
+        bool parsed = rowset_meta->init(value);
+        if (!parsed) {
+            LOG(WARNING) << "parse row binlog meta string failed for key: " << key;
+            unused_row_binlog_key_suffixes.emplace_back(key.substr(kRowBinlogPrefix.size()));
+            return true;
+        }
+        if (!rowset_meta->is_row_binlog()) {
+            LOG(WARNING) << "row binlog meta key but rowset meta is not row binlog, key: " << key;
+            unused_row_binlog_key_suffixes.emplace_back(key.substr(kRowBinlogPrefix.size()));
+            return true;
+        }
+
+        TabletSharedPtr tablet = _tablet_manager->get_tablet(rowset_meta->tablet_id());
+        if (tablet == nullptr) {
+            LOG(INFO) << "failed to find tablet " << rowset_meta->tablet_id()
+                      << " for row binlog rowset: " << rowset_meta->rowset_id()
+                      << ", tablet may be dropped";
+            unused_row_binlog_key_suffixes.emplace_back(key.substr(kRowBinlogPrefix.size()));
+            return true;
+        }
+        if (tablet->tablet_uid() != rowset_meta->tablet_uid()) {
+            LOG(WARNING) << "row binlog meta tablet uid mismatch, remove it. rowset_id="
+                         << rowset_meta->rowset_id();
+            unused_row_binlog_key_suffixes.emplace_back(key.substr(kRowBinlogPrefix.size()));
+            return true;
+        }
+
+        if (rowset_meta->rowset_state() == RowsetStatePB::VISIBLE) {
+            const auto& rb_metas = tablet->tablet_meta()->all_row_binlog_rs_metas();
+            auto it = rb_metas.find(rowset_meta->version());
+            bool useful =
+                    (it != rb_metas.end() && it->second != nullptr &&
+                     it->second->rowset_id() == rowset_meta->rowset_id());
+            if (!useful && !check_rowset_id_in_unused_rowsets(rowset_meta->rowset_id())) {
+                unused_row_binlog_key_suffixes.emplace_back(key.substr(kRowBinlogPrefix.size()));
+            }
+        }
+        return true;
+    };
+
+    auto data_dirs = get_stores();
+    for (auto data_dir : data_dirs) {
+        static_cast<void>(RowsetMetaManager::traverse_row_binlog_metas(
+                data_dir->get_meta(), unused_row_binlog_collector));
+        for (const auto& suffix : unused_row_binlog_key_suffixes) {
+            static_cast<void>(
+                    RowsetMetaManager::remove_row_binlog(data_dir->get_meta(), suffix));
+        }
+        LOG(INFO) << "remove " << unused_row_binlog_key_suffixes.size()
+                  << " invalid row binlog meta from dir: " << data_dir->path();
+        unused_row_binlog_key_suffixes.clear();
     }
 }
 

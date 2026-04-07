@@ -456,7 +456,12 @@ Status publish_version_and_add_rowset(StorageEngine& engine, int64_t partition_i
 
     // Add visible rowset to tablet
     int64_t start_time = MonotonicMicros();
-    result = tablet->add_inc_rowset(rowset);
+    if (extend_tablet_txn_info_lifetime != nullptr &&
+        extend_tablet_txn_info_lifetime->row_binlog_rowset != nullptr) {
+        result = tablet->add_inc_rowset(rowset, extend_tablet_txn_info_lifetime->row_binlog_rowset);
+    } else {
+        result = tablet->add_inc_rowset(rowset);
+    }
     DBUG_EXECUTE_IF("EnginePublishVersionTask.handle.after_add_inc_rowset_rowsets_block",
                     DBUG_BLOCK);
     stats.add_inc_rowset_us = MonotonicMicros() - start_time;

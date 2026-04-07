@@ -25,12 +25,30 @@
 #include "storage/olap_common.h"
 
 namespace doris {
+
+// Row binlog op type.
+// NOTE: The value is persisted into row binlog data, so keep it stable.
+static constexpr int64_t ROW_BINLOG_APPEND = 0;
+static constexpr int64_t ROW_BINLOG_UPDATE = 1;
+static constexpr int64_t ROW_BINLOG_DELETE = 2;
+
 constexpr std::string_view kBinlogPrefix = "binlog_";
 constexpr std::string_view kBinlogMetaPrefix = "binlog_meta_";
 constexpr std::string_view kBinlogDataPrefix = "binlog_data_";
 constexpr std::string_view kRowBinlogPrefix = "binlog_row_";
 // used in file directory
 constexpr std::string_view FDRowBinlogSuffix = "_row_binlog";
+
+inline auto make_row_binlog_meta_key_prefix(const TabletUid& tablet_uid) {
+    return fmt::format("{}{}_", kRowBinlogPrefix, tablet_uid.to_string());
+}
+
+inline auto make_row_binlog_meta_key(const TabletUid& tablet_uid, int64_t version,
+                                     const RowsetId& rowset_id) {
+    // version is formatted to 20 bytes to avoid the problem of sorting
+    return fmt::format("{}{}_{:020d}_{}", kRowBinlogPrefix, tablet_uid.to_string(), version,
+                       rowset_id.to_string());
+}
 
 inline auto make_binlog_meta_key(const std::string_view tablet, int64_t version,
                                  const std::string_view rowset) {

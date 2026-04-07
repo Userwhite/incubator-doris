@@ -1571,6 +1571,13 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         SegmentLoader::instance()->erase_segments(rowset->rowset_id(), rowset->num_segments());
     }
 
+    // `binlog_delvec` records delete bitmap deltas that should be persisted separately for binlog.
+    // It is optional and only populated when the writer path enables it.
+    if (txn_info->binlog_delvec != nullptr) {
+        // `delete_bitmap` is the final delta computed for this txn publish.
+        *(txn_info->binlog_delvec) = DeleteBitmap(*delete_bitmap);
+    }
+
     size_t total_rows = std::accumulate(
             segments.begin(), segments.end(), 0,
             [](size_t sum, const segment_v2::SegmentSharedPtr& s) { return sum += s->num_rows(); });

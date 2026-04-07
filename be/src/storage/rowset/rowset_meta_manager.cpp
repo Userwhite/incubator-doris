@@ -479,6 +479,30 @@ Status RowsetMetaManager::remove_binlog(OlapMeta* meta, const std::string& suffi
                                                   kBinlogDataPrefix.data() + suffix});
 }
 
+Status RowsetMetaManager::save_row_binlog(OlapMeta* meta, TabletUid tablet_uid, int64_t version,
+                                         const RowsetId& rowset_id,
+                                         const RowsetMetaPB& rowset_meta_pb) {
+    // row binlog key is not supported for cumulative rowset
+    if (rowset_meta_pb.start_version() != rowset_meta_pb.end_version()) {
+        return Status::Error<ROWSET_BINLOG_NOT_ONLY_ONE_VERSION>(
+                "row binlog meta key is not supported for cumulative rowset. rowset_id:{}",
+                rowset_id.to_string());
+    }
+    DCHECK_EQ(version, rowset_meta_pb.start_version());
+
+    std::string key = make_row_binlog_meta_key(tablet_uid, version, rowset_id);
+    std::string value;
+    if (!rowset_meta_pb.SerializeToString(&value)) {
+        return Status::Error<SERIALIZE_PROTOBUF_ERROR>(
+                "serialize row binlog rowset pb failed. key={}", key);
+    }
+    return meta->put(META_COLUMN_FAMILY_INDEX, key, value);
+}
+
+Status RowsetMetaManager::remove_row_binlog(OlapMeta* meta, const std::string& suffix) {
+    return meta->remove(META_COLUMN_FAMILY_INDEX, std::string(kRowBinlogPrefix) + suffix);
+}
+
 Status RowsetMetaManager::ingest_binlog_metas(OlapMeta* meta, TabletUid tablet_uid,
                                               RowsetBinlogMetasPB* metas_pb) {
     std::vector<OlapMeta::BatchEntry> entries;
@@ -555,6 +579,42 @@ Status RowsetMetaManager::traverse_binlog_metas(
         seek_found = false;
         status = meta->iterate(META_COLUMN_FAMILY_INDEX, last_info.first, kBinlogMetaPrefix.data(),
                                traverse_binlog_meta_func);
+    } while (status.ok() && seek_found);
+
+    return status;
+}
+
+Status RowsetMetaManager::traverse_row_binlog_metas(
+        OlapMeta* meta,
+        std::function<bool(std::string_view, std::string_view, bool)> const& collector) {
+    std::pair<std::string, bool> last_info = std::make_pair(kRowBinlogPrefix.data(), false);
+    bool seek_found = false;
+    Status status;
+    auto traverse_func = [&last_info, &seek_found, &collector](std::string_view key,
+                                                               std::string_view value) -> bool {
+        seek_found = true;
+        auto& [last_prefix, need_collect] = last_info;
+        size_t pos = key.find('_', kRowBinlogPrefix.size());
+        if (pos == std::string::npos) {
+            LOG(WARNING) << "invalid row binlog meta key: " << key;
+            return true;
+        }
+        std::string_view key_view(key.data(), pos);
+        std::string_view last_prefix_view(last_prefix.data(), last_prefix.size() - 1);
+
+        if (last_prefix_view != key_view) {
+            need_collect = collector(key, value, true);
+            last_prefix = std::string(key_view) + "~";
+        } else if (need_collect) {
+            collector(key, value, false);
+        }
+        return need_collect;
+    };
+
+    do {
+        seek_found = false;
+        status = meta->iterate(META_COLUMN_FAMILY_INDEX, last_info.first, kRowBinlogPrefix.data(),
+                               traverse_func);
     } while (status.ok() && seek_found);
 
     return status;

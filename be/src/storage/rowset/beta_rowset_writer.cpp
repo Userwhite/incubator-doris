@@ -329,6 +329,7 @@ Status BaseBetaRowsetWriter::init(const RowsetWriterContext& rowset_writer_conte
     if (_context.write_binlog_opt().is_binlog_writer()) {
         _rowset_meta->mark_row_binlog();
     }
+    _rowset_meta->set_compaction_level(_context.compaction_level);
     _context.segment_collector = std::make_shared<SegmentCollectorT<BaseBetaRowsetWriter>>(this);
     _context.file_writer_creator = std::make_shared<FileWriterCreatorT<BaseBetaRowsetWriter>>(this);
     return Status::OK();

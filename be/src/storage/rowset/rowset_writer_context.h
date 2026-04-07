@@ -37,6 +37,7 @@
 #include "storage/storage_policy.h"
 #include "storage/tablet/tablet.h"
 #include "storage/tablet/tablet_schema.h"
+#include "storage/segment/segment_writer.h"
 
 namespace doris {
 
@@ -264,7 +265,18 @@ struct RowsetWriterContext {
 
         bool need_build_binlog() const { return binlog_write_type != BinlogWriteType::Unknown; }
 
-        void set_need_before(bool need_before) { this->_need_before = need_before; }
+        void set_need_before(bool need_before) {
+            this->_need_before = need_before;
+            _segment_write_binlog_opt.write_before = need_before;
+        }
+
+        segment_v2::SegmentWriteBinlogOptions& write_binlog_config() {
+            return _segment_write_binlog_opt;
+        }
+
+        const segment_v2::SegmentWriteBinlogOptions& write_binlog_config() const {
+            return _segment_write_binlog_opt;
+        }
 
     private:
         // if you don't need to build row_binlog, `PrimaryWriter` and `BinlogWriter` are both false
@@ -275,6 +287,7 @@ struct RowsetWriterContext {
             Unknown
         } binlog_write_type = BinlogWriteType::Unknown;
         bool _need_before = false;
+        segment_v2::SegmentWriteBinlogOptions _segment_write_binlog_opt;
     } _write_binlog_opt;
 
     BinlogOptions& write_binlog_opt() { return _write_binlog_opt; }

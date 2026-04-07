@@ -74,6 +74,15 @@ public:
     static Status remove_binlog(OlapMeta* meta, const std::string& suffix);
     static Status ingest_binlog_metas(OlapMeta* meta, TabletUid tablet_uid,
                                       RowsetBinlogMetasPB* metas_pb);
+
+    // Row binlog meta is persisted separately from normal rowset meta.
+    // Key format: {kRowBinlogPrefix}{tablet_uid}_{version(20 bytes)}_{rowset_id}
+    static Status save_row_binlog(OlapMeta* meta, TabletUid tablet_uid, int64_t version,
+                                  const RowsetId& rowset_id, const RowsetMetaPB& rowset_meta_pb);
+    static Status remove_row_binlog(OlapMeta* meta, const std::string& suffix);
+    static Status traverse_row_binlog_metas(
+            OlapMeta* meta,
+            std::function<bool(std::string_view, std::string_view, bool)> const& collector);
     static Status traverse_rowset_metas(OlapMeta* meta,
                                         std::function<bool(const TabletUid&, const RowsetId&,
                                                            std::string_view)> const& collector);

@@ -31,6 +31,8 @@
 
 namespace doris {
 
+struct GroupFlushContext;
+
 class DataDir;
 class MemTable;
 class MemTableMemoryLimiter;
@@ -66,7 +68,8 @@ public:
     FlushToken(ThreadPool* thread_pool, std::shared_ptr<WorkloadGroup> wg_sptr)
             : _flush_status(Status::OK()), _thread_pool(thread_pool), _wg_wptr(wg_sptr) {}
 
-    Status submit(std::shared_ptr<MemTable> mem_table);
+    Status submit(std::shared_ptr<MemTable> mem_table,
+                  std::shared_ptr<std::vector<int128_t>> lsn_ids = nullptr);
 
     // error has happens, so we cancel this token
     // And remove all tasks in the queue.
@@ -94,6 +97,10 @@ private:
     friend class MemtableFlushTask;
 
     void _flush_memtable(std::shared_ptr<MemTable> memtable_ptr, int32_t segment_id,
+                         int64_t submit_task_time);
+
+    void _flush_memtable(std::shared_ptr<GroupFlushContext> ctx,
+                         const RowsetWriterSharedPtr& flush_writer, bool is_data_task,
                          int64_t submit_task_time);
 
     Status _do_flush_memtable(MemTable* memtable, int32_t segment_id, int64_t* flush_size);

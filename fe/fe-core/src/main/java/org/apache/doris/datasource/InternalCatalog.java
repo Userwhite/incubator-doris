@@ -2327,6 +2327,7 @@ public class InternalCatalog implements CatalogIf<Database> {
 
         // create columns
         List<Column> baseSchema = createTableInfo.getColumns();
+
         validateColumns(baseSchema, isKeysRequired);
         checkAutoIncColumns(baseSchema, keysType);
 
@@ -2960,11 +2961,12 @@ public class InternalCatalog implements CatalogIf<Database> {
             throw new DdlException(e.getMessage());
         }
         int schemaHash = Util.generateSchemaHash();
+
         olapTable.setIndexMeta(baseIndexId, tableName, baseSchema, schemaVersion, schemaHash, shortKeyColumnCount,
                 baseIndexStorageType, keysType, olapTable.getIndexes());
 
         if (olapTable.getBinlogConfig().isEnableForStreaming()) {
-            olapTable.createNewRowBinlogMeta(idGeneratorBuffer);
+            olapTable.createNewRowBinlogMeta(idGeneratorBuffer, db.getId());
         }
 
         for (AlterOp alterOp : createTableInfo.getAddRollupOps()) {

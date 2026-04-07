@@ -41,6 +41,7 @@
 #include "io/fs/file_writer.h"
 #include "storage/olap_define.h"
 #include "storage/rowset/beta_rowset_writer.h" // SegmentStatistics
+#include "storage/segment/row_binlog_segment_writer.h"
 #include "storage/segment/segment_writer.h"
 #include "storage/segment/vertical_segment_writer.h"
 #include "storage/tablet/tablet_schema.h"
@@ -121,9 +122,15 @@ Status SegmentFlusher::_create_segment_writer(std::unique_ptr<segment_v2::Segmen
         writer_options.compression_type = NO_COMPRESSION;
     }
 
-    writer = std::make_unique<segment_v2::SegmentWriter>(
-            segment_file_writer.get(), segment_id, _context.tablet_schema, _context.tablet,
-            _context.data_dir, writer_options, index_file_writer.get());
+    if (_context.write_binlog_opt().is_binlog_writer()) {
+        writer = std::make_unique<segment_v2::RowBinlogSegmentWriter>(
+                segment_file_writer.get(), segment_id, _context.tablet_schema, _context.tablet,
+                _context.data_dir, writer_options, _context.write_binlog_opt().write_binlog_config());
+    } else {
+        writer = std::make_unique<segment_v2::SegmentWriter>(
+                segment_file_writer.get(), segment_id, _context.tablet_schema, _context.tablet,
+                _context.data_dir, writer_options, index_file_writer.get());
+    }
     RETURN_IF_ERROR(_seg_files.add(segment_id, std::move(segment_file_writer)));
     if (_context.tablet_schema->has_inverted_index() || _context.tablet_schema->has_ann_index()) {
         RETURN_IF_ERROR(_idx_files.add(segment_id, std::move(index_file_writer)));

@@ -46,8 +46,8 @@
 #include "storage/rowset/rowset_meta.h"
 #include "storage/rowset_builder.h"
 #include "storage/schema_change/schema_change.h"
-#include "storage/storage_engine.h"
 #include "storage/tablet/tablet_manager.h"
+#include "storage/storage_engine.h"
 #include "storage/tablet_info.h"
 #include "storage/txn/txn_manager.h"
 #include "util/brpc_client_cache.h"
@@ -69,7 +69,14 @@ BaseDeltaWriter::BaseDeltaWriter(const WriteRequest& req, RuntimeProfile* profil
 DeltaWriter::DeltaWriter(StorageEngine& engine, const WriteRequest& req, RuntimeProfile* profile,
                          const UniqueId& load_id)
         : BaseDeltaWriter(req, profile, load_id), _engine(engine) {
-    _rowset_builder = std::make_unique<RowsetBuilder>(_engine, req, profile);
+    auto tablet = _engine.tablet_manager()->get_tablet(req.tablet_id);
+    if (tablet != nullptr && tablet->enable_row_binlog()) {
+        WriteRequest row_binlog_req = req;
+        row_binlog_req.write_req_type = WriteRequestType::ROW_BINLOG;
+        _rowset_builder = std::make_unique<GroupRowsetBuilder>(_engine, req, row_binlog_req, profile);
+    } else {
+        _rowset_builder = std::make_unique<RowsetBuilder>(_engine, req, profile);
+    }
 }
 
 void BaseDeltaWriter::_init_profile(RuntimeProfile* profile) {

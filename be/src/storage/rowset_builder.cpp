@@ -276,7 +276,11 @@ Status BaseRowsetBuilder::_init_context_common_fields(RowsetWriterContext& conte
     context.tablet_id = _req.tablet_id;
     context.index_id = _req.index_id;
     context.tablet = _tablet;
-    context.enable_segcompaction = true;
+    context.enable_segcompaction = !_req.table_schema_param->is_partial_update();
+    if (_req.write_req_type == WriteRequestType::ROW_BINLOG || 
+        tablet()->enable_row_binlog()) {
+        context.enable_segcompaction = false;
+    }
     context.write_type = DataWriteType::TYPE_DIRECT;
     context.write_file_cache = _req.write_file_cache;
 
@@ -390,7 +394,8 @@ Status RowsetBuilder::commit_txn() {
     // Transfer ownership of `PendingRowsetGuard` to `TxnManager`
     Status res = _engine.txn_manager()->commit_txn(
             _req.partition_id, *tablet(), _req.txn_id, _req.load_id, _rowset,
-            std::move(_pending_rs_guard), false, _partial_update_info);
+            std::move(_pending_rs_guard), false, _partial_update_info, nullptr,
+            std::move(_attach_rowsets));
 
     if (!res && !res.is<PUSH_TRANSACTION_ALREADY_EXIST>()) {
         LOG(WARNING) << "Failed to commit txn: " << _req.txn_id
@@ -507,6 +512,23 @@ Status GroupRowsetBuilder::init() {
     RETURN_IF_ERROR(RowsetFactory::create_empty_group_rowset_writer(&group_writer));
     group_writer->set_data_writer(_txn_rs_builder->rowset_writer());
     group_writer->set_row_binlog_writer(_row_binlog_rowset_builder->rowset_writer());
+
+    // Decouple row-binlog writer from the source data writer context: fill source info
+    // from its own configuration at init time.
+    {
+        const auto& data_ctx = _txn_rs_builder->rowset_writer()->context();
+        auto& binlog_ctx = const_cast<RowsetWriterContext&>(_row_binlog_rowset_builder->rowset_writer()->context());
+        auto& cfg = binlog_ctx.write_binlog_opt().write_binlog_config();
+        cfg.source_tablet_schema = data_ctx.tablet_schema;
+        cfg.source_partial_update_info = data_ctx.partial_update_info;
+        cfg.source_mow_context = data_ctx.mow_context;
+        cfg.source_is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
+        cfg.source_write_type = data_ctx.write_type;
+
+        // Keep binlog writer context self-sufficient for historical row retrieval.
+        binlog_ctx.mow_context = data_ctx.mow_context;
+        binlog_ctx.partial_update_info = data_ctx.partial_update_info;
+    }
 
     _rowset_writer = std::move(group_writer);
     _is_init = true;

@@ -184,6 +184,12 @@ public:
     bool rowset_exists_unlocked(const RowsetSharedPtr& rowset);
 
     Status add_inc_rowset(const RowsetSharedPtr& rowset);
+
+    // Add row binlog rowset (version-aligned with data rowset). It will not persist meta.
+    Status add_row_binlog_rowset(RowsetSharedPtr row_binlog_rowset);
+
+    // Add a committed data rowset and its row binlog rowset (if any). It will not persist meta.
+    Status add_inc_rowset(const RowsetSharedPtr& rowset, RowsetSharedPtr row_binlog_rowset);
     /// Delete stale rowset by timing. This delete policy uses now() minutes
     /// config::tablet_rowset_expired_stale_sweep_time_sec to compute the deadline of expired rowset
     /// to delete.  When rowset is deleted, it will be added to StorageEngine unused map and record
