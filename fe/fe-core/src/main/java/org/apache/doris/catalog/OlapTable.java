@@ -603,8 +603,12 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
     }
 
     public Map<String, Long> getIndexNameToId() {
-        return new HashMap<>(Maps.filterValues(indexNameToId, indexId ->
+        return ImmutableMap.copyOf(Maps.filterValues(indexNameToId, indexId ->
                 indexIdToMeta.containsKey(indexId) && !indexIdToMeta.get(indexId).isRowBinlogIndex()));
+    }
+
+    public Map<String, Long> getMutableIndexNameToId() {
+        return indexNameToId;
     }
 
     public Long getIndexIdByName(String indexName) {
@@ -1058,7 +1062,11 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
     }
 
     public Map<Long, MaterializedIndexMeta> getIndexIdToMeta() {
-        return new HashMap<>(Maps.filterValues(indexIdToMeta, meta -> !meta.isRowBinlogIndex()));
+        return ImmutableMap.copyOf(Maps.filterValues(indexIdToMeta, meta -> !meta.isRowBinlogIndex()));
+    }
+
+    public Map<Long, MaterializedIndexMeta> getMutableIndexIdToMeta() {
+        return indexIdToMeta;
     }
 
     public Map<Long, MaterializedIndexMeta> getCopyOfIndexIdToMeta() {
