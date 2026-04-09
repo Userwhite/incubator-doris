@@ -187,6 +187,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
                 .collect(Collectors.toList());
         Assert.assertFalse(cols.contains(Column.generateBeforeColName("v1")));
 
+        // single add column
         alterTable("ALTER TABLE test." + tableName + " ADD COLUMN v2 INT AFTER v1", connectContext);
         jobSize++;
         waitAlterJobDone(Env.getCurrentEnv().getSchemaChangeHandler().getAlterJobsV2());
@@ -194,18 +195,45 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         cols = tbl.getRowBinlogMeta().getSchema(true).stream().map(Column::getName).collect(Collectors.toList());
         Assert.assertEquals(2, cols.indexOf("v2"));
         Assert.assertEquals(3, cols.indexOf(Column.BINLOG_LSN_COL));
+        Assert.assertFalse(cols.contains(Column.generateBeforeColName("v2")));
 
-        alterTable("ALTER TABLE test." + tableName + " DROP COLUMN v2", connectContext);
+        // multiple add column clauses in one ALTER
+        alterTable("ALTER TABLE test." + tableName
+                + " ADD COLUMN v3 INT AFTER v2, ADD COLUMN v4 INT AFTER v3", connectContext);
         jobSize++;
         waitAlterJobDone(Env.getCurrentEnv().getSchemaChangeHandler().getAlterJobsV2());
 
         cols = tbl.getRowBinlogMeta().getSchema(true).stream().map(Column::getName).collect(Collectors.toList());
-        Assert.assertFalse(cols.contains("v2"));
-        Assert.assertEquals(2, cols.indexOf(Column.BINLOG_LSN_COL));
+        Assert.assertEquals(3, cols.indexOf("v3"));
+        Assert.assertEquals(4, cols.indexOf("v4"));
+        Assert.assertEquals(5, cols.indexOf(Column.BINLOG_LSN_COL));
+        Assert.assertFalse(cols.contains(Column.generateBeforeColName("v3")));
+        Assert.assertFalse(cols.contains(Column.generateBeforeColName("v4")));
+
+        // AddColumnsOp: ADD COLUMN (colDef1, colDef2)
+        alterTable("ALTER TABLE test." + tableName + " ADD COLUMN (v5 INT, v6 INT)", connectContext);
+        jobSize++;
+        waitAlterJobDone(Env.getCurrentEnv().getSchemaChangeHandler().getAlterJobsV2());
+
+        cols = tbl.getRowBinlogMeta().getSchema(true).stream().map(Column::getName).collect(Collectors.toList());
+        Assert.assertEquals(5, cols.indexOf("v5"));
+        Assert.assertEquals(6, cols.indexOf("v6"));
+        Assert.assertEquals(7, cols.indexOf(Column.BINLOG_LSN_COL));
+        Assert.assertFalse(cols.contains(Column.generateBeforeColName("v5")));
+        Assert.assertFalse(cols.contains(Column.generateBeforeColName("v6")));
+
+        // drop column
+        alterTable("ALTER TABLE test." + tableName + " DROP COLUMN v6", connectContext);
+        jobSize++;
+        waitAlterJobDone(Env.getCurrentEnv().getSchemaChangeHandler().getAlterJobsV2());
+
+        cols = tbl.getRowBinlogMeta().getSchema(true).stream().map(Column::getName).collect(Collectors.toList());
+        Assert.assertFalse(cols.contains("v6"));
+        Assert.assertEquals(6, cols.indexOf(Column.BINLOG_LSN_COL));
     }
 
     @Test
-    public void testWithRowBinlogSchemaChangeWithHistoricalValueAndPosition() throws Exception {
+    public void testWithRowBinlogSchemaChangeWithHistoricalValue() throws Exception {
         String tableName = "binlog_hist";
         String create = "CREATE TABLE IF NOT EXISTS test." + tableName + " (\n"
                 + "k1 INT NOT NULL,\n"
@@ -225,6 +253,7 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
                 .collect(Collectors.toList());
         Assert.assertTrue(cols.contains(Column.generateBeforeColName("v1")));
 
+        // single add column
         alterTable("ALTER TABLE test." + tableName + " ADD COLUMN v2 INT AFTER v1", connectContext);
         jobSize++;
         waitAlterJobDone(Env.getCurrentEnv().getSchemaChangeHandler().getAlterJobsV2());
@@ -235,16 +264,49 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
         Assert.assertEquals(cols.indexOf(Column.generateBeforeColName("v1")) + 1,
                 cols.indexOf(Column.generateBeforeColName("v2")));
 
-        alterTable("ALTER TABLE test." + tableName + " DROP COLUMN v2", connectContext);
+        // multiple add column clauses in one ALTER
+        alterTable("ALTER TABLE test." + tableName
+                + " ADD COLUMN v3 INT AFTER v2, ADD COLUMN v4 INT AFTER v3", connectContext);
+        jobSize++;
+        waitAlterJobDone(Env.getCurrentEnv().getSchemaChangeHandler().getAlterJobsV2());
+
+        cols = tbl.getRowBinlogMeta().getSchema(true).stream().map(Column::getName).collect(Collectors.toList());
+        Assert.assertEquals(3, cols.indexOf("v3"));
+        Assert.assertEquals(4, cols.indexOf("v4"));
+        Assert.assertTrue(cols.contains(Column.generateBeforeColName("v3")));
+        Assert.assertTrue(cols.contains(Column.generateBeforeColName("v4")));
+        Assert.assertEquals(cols.indexOf(Column.generateBeforeColName("v2")) + 1,
+                cols.indexOf(Column.generateBeforeColName("v3")));
+        Assert.assertEquals(cols.indexOf(Column.generateBeforeColName("v3")) + 1,
+                cols.indexOf(Column.generateBeforeColName("v4")));
+
+        // AddColumnsOp: ADD COLUMN (colDef1, colDef2)
+        alterTable("ALTER TABLE test." + tableName + " ADD COLUMN (v5 INT, v6 INT)", connectContext);
+        jobSize++;
+        waitAlterJobDone(Env.getCurrentEnv().getSchemaChangeHandler().getAlterJobsV2());
+
+        cols = tbl.getRowBinlogMeta().getSchema(true).stream().map(Column::getName).collect(Collectors.toList());
+        Assert.assertEquals(5, cols.indexOf("v5"));
+        Assert.assertEquals(6, cols.indexOf("v6"));
+        Assert.assertTrue(cols.contains(Column.generateBeforeColName("v5")));
+        Assert.assertTrue(cols.contains(Column.generateBeforeColName("v6")));
+        Assert.assertEquals(cols.indexOf(Column.generateBeforeColName("v4")) + 1,
+                cols.indexOf(Column.generateBeforeColName("v5")));
+        Assert.assertEquals(cols.indexOf(Column.generateBeforeColName("v5")) + 1,
+                cols.indexOf(Column.generateBeforeColName("v6")));
+
+        // drop column
+        alterTable("ALTER TABLE test." + tableName + " DROP COLUMN v6", connectContext);
         jobSize++;
         waitAlterJobDone(Env.getCurrentEnv().getSchemaChangeHandler().getAlterJobsV2());
         cols = tbl.getRowBinlogMeta().getSchema(true).stream().map(Column::getName).collect(Collectors.toList());
-        Assert.assertFalse(cols.contains("v2"));
-        Assert.assertFalse(cols.contains(Column.generateBeforeColName("v2")));
+        Assert.assertFalse(cols.contains("v6"));
+        Assert.assertFalse(cols.contains(Column.generateBeforeColName("v6")));
     }
 
     @Test
-    public void testWithRowBinlogModifyColumnNotSupported() throws Exception {
+    public void testWithRowBinlogOpNotSupported() throws Exception {
+        // 1) MODIFY COLUMN not supported
         String tableName = "binlog_mod";
         String create = "CREATE TABLE IF NOT EXISTS test." + tableName + " (\n"
                 + "k1 INT NOT NULL,\n"
@@ -256,46 +318,38 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
                 + "'enable_unique_key_merge_on_write'='true',"
                 + "'binlog.enable'='true','binlog.format'='ROW','binlog.need_historical_value'='false');";
         createTable(create);
+        expectException("ALTER TABLE test." + tableName + " MODIFY COLUMN v1 BIGINT", "Table With Row Binlog");
 
-        expectException("ALTER TABLE test." + tableName + " MODIFY COLUMN v1 BIGINT",
-                "Table With Row Binlog");
-    }
-
-    @Test
-    public void testWithRowBinlogVariantNotSupported() throws Exception {
-        // create table with VARIANT
-        String create = "CREATE TABLE test.binlog_variant (k1 INT NOT NULL, v1 VARIANT) "
+        // 2) VARIANT not supported
+        String createVariant = "CREATE TABLE test.binlog_variant (k1 INT NOT NULL, v1 VARIANT) "
                 + "UNIQUE KEY(k1) DISTRIBUTED BY HASH(k1) BUCKETS 1 "
                 + "PROPERTIES('replication_num'='1','light_schema_change'='true',"
                 + "'enable_unique_key_merge_on_write'='true',"
                 + "'binlog.enable'='true','binlog.format'='ROW');";
         try {
-            createTable(create);
+            createTable(createVariant);
             Assertions.fail("Expected exception for VARIANT column");
         } catch (Exception e) {
             Assert.assertTrue(e.getMessage().toLowerCase().contains("variant"));
         }
 
-        // alter add VARIANT column
-        String tableName = "binlog_add_variant";
-        String create2 = "CREATE TABLE test." + tableName + " (k1 INT NOT NULL, v1 INT) "
+        String tableName2 = "binlog_add_variant";
+        String create2 = "CREATE TABLE test." + tableName2 + " (k1 INT NOT NULL, v1 INT) "
                 + "UNIQUE KEY(k1) DISTRIBUTED BY HASH(k1) BUCKETS 1 "
                 + "PROPERTIES('replication_num'='1','light_schema_change'='true',"
                 + "'enable_unique_key_merge_on_write'='true',"
                 + "'binlog.enable'='true','binlog.format'='ROW');";
         createTable(create2);
-        expectException("ALTER TABLE test." + tableName + " ADD COLUMN v2 VARIANT", "VARIANT");
-    }
+        expectException("ALTER TABLE test." + tableName2 + " ADD COLUMN v2 VARIANT", "VARIANT");
 
-    @Test
-    public void testWithRowBinlogAutoIncNotSupported() throws Exception {
-        String create = "CREATE TABLE test.binlog_autoinc (k1 BIGINT NOT NULL AUTO_INCREMENT, v1 INT) "
+        // 3) AUTO_INCREMENT not supported
+        String createAutoinc = "CREATE TABLE test.binlog_autoinc (k1 BIGINT NOT NULL AUTO_INCREMENT, v1 INT) "
                 + "UNIQUE KEY(k1) DISTRIBUTED BY HASH(k1) BUCKETS 1 "
                 + "PROPERTIES('replication_num'='1','light_schema_change'='true',"
                 + "'enable_unique_key_merge_on_write'='true',"
                 + "'binlog.enable'='true','binlog.format'='ROW');";
         try {
-            createTable(create);
+            createTable(createAutoinc);
             Assertions.fail("Expected exception for AUTO_INCREMENT column");
         } catch (Exception e) {
             Assert.assertTrue(e.getMessage().toLowerCase().contains("auto"));

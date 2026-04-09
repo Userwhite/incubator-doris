@@ -217,7 +217,11 @@ public class SchemaChangeHandler extends AlterHandler {
             Preconditions.checkState(indexSchemaMap.containsKey(rowBinlogIndexId));
 
             LinkedList<Column> rowBinlogSchema = indexSchemaMap.get(rowBinlogIndexId);
-            addColumnRowBinlog(rowBinlogSchema, column, columnPos, newColNameSet,
+            boolean needHistoricalValue = olapTable.getBinlogConfig().getNeedHistoricalValue();
+            if (needHistoricalValue && !column.isKey()) {
+                newColNameSet.add(Column.generateBeforeColName(column.getName()));
+            }
+            addColumnRowBinlog(rowBinlogSchema, column, columnPos, newColNameSet, needHistoricalValue,
                     colUniqueIdSupplierMap.get(rowBinlogIndexId));
         }
 
@@ -267,6 +271,16 @@ public class SchemaChangeHandler extends AlterHandler {
             newColNameSet.add(column.getName());
         }
 
+        long rowBinlogIndexId = olapTable.getBaseIndexMeta().getRowBinlogIndexId();
+        boolean needHistoricalValue = rowBinlogIndexId > 0 && olapTable.getBinlogConfig().getNeedHistoricalValue();
+        if (needHistoricalValue) {
+            for (Column column : columns) {
+                if (!column.isKey()) {
+                    newColNameSet.add(Column.generateBeforeColName(column.getName()));
+                }
+            }
+        }
+
         String baseIndexName = olapTable.getName();
         checkAssignedTargetIndexName(baseIndexName, targetIndexName);
 
@@ -285,7 +299,6 @@ public class SchemaChangeHandler extends AlterHandler {
             }
 
             // add column to binlog<Row> schema
-            long rowBinlogIndexId = olapTable.getBaseIndexMeta().getRowBinlogIndexId();
             if (rowBinlogIndexId > 0) {
                 if (column.getType().isVariantType()) {
                     throw new DdlException(
@@ -298,7 +311,7 @@ public class SchemaChangeHandler extends AlterHandler {
                 Preconditions.checkState(indexSchemaMap.containsKey(rowBinlogIndexId));
 
                 LinkedList<Column> rowBinlogSchema = indexSchemaMap.get(rowBinlogIndexId);
-                addColumnRowBinlog(rowBinlogSchema, column, null, newColNameSet,
+                addColumnRowBinlog(rowBinlogSchema, column, null, newColNameSet, needHistoricalValue,
                         colUniqueIdSupplierMap.get(rowBinlogIndexId));
             }
         }
@@ -306,7 +319,8 @@ public class SchemaChangeHandler extends AlterHandler {
     }
 
     private void addColumnRowBinlog(List<Column> rowBinlogSchema, Column newColumn, ColumnPosition columnPos,
-                                    Set<String> newColNameSet, IntSupplier columnUniqueIdSupplier) throws DdlException {
+                                    Set<String> newColNameSet, boolean needHistoricalValue,
+                                    IntSupplier columnUniqueIdSupplier) throws DdlException {
         if (newColumn.isAutoInc() || newColumn.getDataType().isVariantType()) {
             throw new DdlException("can't add AutoInc/Variant column " + " on table with binlog<Row>, column: "
                     + newColumn.getDataType());
@@ -327,11 +341,8 @@ public class SchemaChangeHandler extends AlterHandler {
             checkAndAddColumn(rowBinlogSchema, afterBinlogColumn, afterBinlogColumnPos, newColNameSet, false,
                     columnUniqueIdSupplier.getAsInt());
 
-            // before value: only exist when row binlog schema includes historical columns.
-            boolean needHistoricalValue = rowBinlogSchema.stream()
-                    .anyMatch(c -> c.getName().startsWith(Column.BINLOG_BEFORE_PREFIX));
+            // before value: only exist when table needs historical value.
             if (needHistoricalValue) {
-                newColNameSet.add(Column.generateBeforeColName(newColumn.getName()));
                 Column beforeBinlogColumn = Column.generateBeforeValueColumn(newColumn);
                 ColumnPosition beforeBinlogColumnPos =
                         convertToRowBinlogPosition(rowBinlogSchema, columnPos, false, true);

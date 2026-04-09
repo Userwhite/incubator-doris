@@ -17,8 +17,6 @@
 
 package org.apache.doris.catalog;
 
-import org.apache.doris.binlog.BinlogUtils;
-
 import com.google.common.base.Preconditions;
 
 /**
@@ -29,8 +27,7 @@ public class RowBinlogTableWrapper extends OlapTableWrapper {
     private final MaterializedIndexMeta rowBinlogMeta;
 
     public RowBinlogTableWrapper(OlapTable originTable) {
-        super(originTable, BinlogUtils.wrapBinlogName(originTable.getName()),
-                originTable.generateTableRowBinlogSchema(), KeysType.DUP_KEYS);
+        super(originTable, originTable.getName(), originTable.generateTableRowBinlogSchema(), KeysType.DUP_KEYS);
         this.rowBinlogMeta = originTable.getRowBinlogMeta();
         Preconditions.checkNotNull(rowBinlogMeta, "row binlog meta is null, table=%s", originTable.getName());
         this.setBaseIndexId(rowBinlogMeta.getIndexId());
