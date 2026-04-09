@@ -25,8 +25,9 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
-public class RowBinlogTableWrapperTest {
+public class OlapTableWrapperTest {
 
     private static OlapTable newTestTable(BinlogConfig binlogConfig) {
         long baseIndexId = 1L;
@@ -36,7 +37,9 @@ public class RowBinlogTableWrapperTest {
         value.setIsKey(false);
         List<Column> baseSchema = Lists.newArrayList(key, value);
 
-        OlapTable table = new OlapTable(1L, "tbl", baseSchema, KeysType.PRIMARY_KEYS, null, null);
+        // Use non-null partition/distribution info so wrapper delegation can be asserted meaningfully.
+        OlapTable table = new OlapTable(1L, "tbl", baseSchema, KeysType.PRIMARY_KEYS,
+                new SinglePartitionInfo(), new RandomDistributionInfo(32));
         table.setBaseIndexId(baseIndexId);
         MaterializedIndexMeta baseIndexMeta = new MaterializedIndexMeta(baseIndexId, baseSchema, 1, 1, (short) 1,
                 TStorageType.COLUMN, KeysType.PRIMARY_KEYS, null);
@@ -53,6 +56,38 @@ public class RowBinlogTableWrapperTest {
             table.setRowBinlogMeta(rowBinlogMeta, "row_binlog");
         }
         return table;
+    }
+
+    @Test
+    public void testOlapTableWrapper() {
+        OlapTable table = newTestTable(BinlogTestUtils.newTestRowBinlogConfig(false, false));
+        OlapTableWrapper wrapper = new OlapTableWrapper(table);
+
+        Assertions.assertEquals(table, wrapper.getOriginTable());
+
+        // base index id & schema delegation
+        Assertions.assertEquals(table.getBaseIndexId(), wrapper.getBaseIndexId());
+        Assertions.assertEquals(table.getIndexNameById(table.getBaseIndexId()), wrapper.getIndexNameById(table.getBaseIndexId()));
+        Assertions.assertEquals(table.getIndexMetaByIndexId(table.getBaseIndexId()),
+                wrapper.getIndexMetaByIndexId(table.getBaseIndexId()));
+        Assertions.assertEquals(table.getSchemaByIndexId(table.getBaseIndexId()), wrapper.getSchemaByIndexId(table.getBaseIndexId()));
+        Assertions.assertEquals(table.getIndexSchemaVersion(table.getBaseIndexId()),
+                wrapper.getIndexSchemaVersion(table.getBaseIndexId()));
+
+        // lock delegation should not throw
+        wrapper.readLock();
+        try {
+            Assertions.assertNotNull(table.getPartitionInfo());
+            Assertions.assertEquals(table.getPartitionInfo(), wrapper.getPartitionInfo());
+        } finally {
+            wrapper.readUnlock();
+        }
+
+        // tryReadLock delegation should not throw
+        boolean locked = wrapper.tryReadLock(1, TimeUnit.SECONDS);
+        if (locked) {
+            wrapper.readUnlock();
+        }
     }
 
     @Test
@@ -73,6 +108,10 @@ public class RowBinlogTableWrapperTest {
         // test index name & id delegations
         Assertions.assertEquals(table.getIndexNameById(table.getBaseIndexId()), wrapper.getIndexNameById(table.getBaseIndexId()));
         Assertions.assertEquals(table.getIndexMetaByIndexId(table.getBaseIndexId()), wrapper.getIndexMetaByIndexId(table.getBaseIndexId()));
+
+        // row binlog index meta should also be reachable through delegation
+        Assertions.assertEquals(table.getIndexMetaByIndexId(rowBinlogMeta.getIndexId()),
+                wrapper.getIndexMetaByIndexId(rowBinlogMeta.getIndexId()));
 
         // test schema delegation
         Assertions.assertEquals(table.getSchemaByIndexId(table.getBaseIndexId()), wrapper.getSchemaByIndexId(table.getBaseIndexId()));

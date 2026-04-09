@@ -18,12 +18,12 @@
 package org.apache.doris.nereids.trees.plans.commands;
 
 import org.apache.doris.backup.CatalogMocker;
+import org.apache.doris.catalog.CatalogRecycleBin;
 import org.apache.doris.catalog.Database;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.KeysType;
 import org.apache.doris.catalog.OlapTable;
 import org.apache.doris.catalog.RandomDistributionInfo;
-import org.apache.doris.catalog.CatalogRecycleBin;
 import org.apache.doris.catalog.SinglePartitionInfo;
 import org.apache.doris.catalog.TableIf;
 import org.apache.doris.common.AnalysisException;
