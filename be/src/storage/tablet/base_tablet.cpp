@@ -1526,13 +1526,10 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
     // 2) pre-allocate per-row LSNs for each transient segment and register them in binlog options
     // 3) wrap both writers into a GroupRowsetWriter so calc_delete_bitmap writes to both.
     if (is_partial_update) {
-        row_binlog_rowset = txn_info->row_binlog_rowset;
-        if (row_binlog_rowset == nullptr) {
-            for (const auto& rs : txn_info->attach_rowsets) {
-                if (rs != nullptr && rs->rowset_meta() != nullptr && rs->rowset_meta()->is_row_binlog()) {
-                    row_binlog_rowset = rs;
-                    break;
-                }
+        for (const auto& rs : txn_info->attach_rowsets) {
+            if (rs != nullptr && rs->rowset_meta() != nullptr && rs->rowset_meta()->is_row_binlog()) {
+                row_binlog_rowset = rs;
+                break;
             }
         }
         build_row_binlog = (row_binlog_rowset != nullptr);
@@ -1655,7 +1652,7 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
             row_binlog_rowset->merge_rowset_meta(*transient_row_binlog->rowset_meta());
             new_segments = row_binlog_rowset->num_segments();
             ss << ", " << txn_info->partial_update_info->partial_update_mode_str()
-               << " flush row binlog (old segment num: " << old_segments
+               << " flush binlog<row> (old segment num: " << old_segments
                << ", new segment num: " << new_segments << ")";
 
             SegmentLoader::instance()->erase_segments(row_binlog_rowset->rowset_id(),

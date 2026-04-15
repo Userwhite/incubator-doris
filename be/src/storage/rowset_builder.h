@@ -83,7 +83,10 @@ public:
         return _partial_update_info;
     }
 
-    bool is_data_builder() const { return _req.write_req_type == WriteRequestType::DATA; }
+    bool is_data_builder() const {
+        return _req.write_req_type == WriteRequestType::DATA ||
+               _req.write_req_type == WriteRequestType::DATA_IN_GROUP;
+    }
 
     // Attach an extra rowset (e.g. binlog rowset) to the same txn.
     Status attach_rowset_to_txn(const RowsetSharedPtr& rowset);

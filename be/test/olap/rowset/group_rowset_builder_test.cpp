@@ -137,7 +137,9 @@ static TDescriptorTable create_descriptor_tablet() {
 
 static std::shared_ptr<OlapTableSchemaParam> create_table_schema_param(
         const TDescriptorTable& tdesc_tbl, int64_t index_id, int32_t schema_hash,
-        const std::vector<TColumn>& columns) {
+        const std::vector<TColumn>& columns, int64_t row_binlog_index_id = -1,
+        int32_t row_binlog_schema_hash = 0,
+        const std::vector<TColumn>* row_binlog_columns = nullptr) {
     auto param = std::make_shared<OlapTableSchemaParam>();
     TOlapTableSchemaParam tschema;
     tschema.db_id = 1;
@@ -151,6 +153,19 @@ static std::shared_ptr<OlapTableSchemaParam> create_table_schema_param(
     tschema.indexes[0].columns_desc = columns;
     for (const auto& col : columns) {
         tschema.indexes[0].columns.push_back(col.column_name);
+    }
+    if (row_binlog_index_id > 0) {
+        tschema.indexes[0].__set_row_binlog_id(row_binlog_index_id);
+        TOlapTableIndexSchema row_binlog_index_schema;
+        row_binlog_index_schema.id = row_binlog_index_id;
+        row_binlog_index_schema.schema_hash = row_binlog_schema_hash;
+        if (row_binlog_columns != nullptr) {
+            row_binlog_index_schema.columns_desc = *row_binlog_columns;
+            for (const auto& col : *row_binlog_columns) {
+                row_binlog_index_schema.columns.push_back(col.column_name);
+            }
+        }
+        tschema.__set_row_binlog_index_schema(row_binlog_index_schema);
     }
     Status st = param->init(tschema);
     EXPECT_TRUE(st.ok()) << st;
@@ -179,10 +194,13 @@ TEST_F(GroupRowsetBuilderTest, buildWithRowBinlogMeta) {
     load_id.set_hi(0);
     load_id.set_lo(0);
     const int64_t index_id = 10001;
+    const int64_t row_binlog_index_id = 10002;
 
     TDescriptorTable tdesc_tbl = create_descriptor_tablet();
     auto param = create_table_schema_param(tdesc_tbl, index_id, request.tablet_schema.schema_hash,
-                                           request.tablet_schema.columns);
+                                           request.tablet_schema.columns, row_binlog_index_id,
+                                           request.row_binlog_schema.schema_hash,
+                                           &request.row_binlog_schema.columns);
 
     WriteRequest data_req;
     data_req.tablet_id = request.tablet_id;
@@ -195,6 +213,7 @@ TEST_F(GroupRowsetBuilderTest, buildWithRowBinlogMeta) {
     data_req.write_req_type = WriteRequestType::DATA;
 
     WriteRequest row_binlog_req = data_req;
+    row_binlog_req.index_id = row_binlog_index_id;
     row_binlog_req.schema_hash = request.row_binlog_schema.schema_hash;
     row_binlog_req.write_req_type = WriteRequestType::ROW_BINLOG;
 
@@ -209,7 +228,7 @@ TEST_F(GroupRowsetBuilderTest, buildWithRowBinlogMeta) {
     ASSERT_FALSE(data_meta->is_row_binlog());
     ASSERT_EQ(request.row_binlog_schema.schema_hash, row_binlog_meta->tablet_schema_hash());
     ASSERT_EQ(request.tablet_schema.schema_hash, data_meta->tablet_schema_hash());
-    ASSERT_EQ(index_id, row_binlog_meta->index_id());
+    ASSERT_EQ(row_binlog_index_id, row_binlog_meta->index_id());
     ASSERT_EQ(index_id, data_meta->index_id());
 
     res = engine_ref->tablet_manager()->drop_tablet(request.tablet_id, request.replica_id, false);

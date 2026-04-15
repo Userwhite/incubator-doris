@@ -3890,11 +3890,6 @@ public class SchemaChangeHandler extends AlterHandler {
         LOG.info("begin to update table's binlog config. table: {}, old binlog: {}, new binlog: {}",
                 olapTable.getName(), oldBinlogConfig, newBinlogConfig);
 
-        if (!oldBinlogConfig.isEnableForStreaming() && newBinlogConfig.isEnableForStreaming()) {
-            throw new DdlException("currently not support enable binlog<Row> by schema change");
-        }
-
-
         for (Partition partition : partitions) {
             updatePartitionProperties(db, olapTable.getName(), partition.getName(), -1, -1,
                     newBinlogConfig, null, null, -1, -1, -1, -1);

@@ -129,7 +129,7 @@ private:
     KeyCoder* _seq_coder = nullptr;
 
     // group every rowset-segment row id to speed up reader
-    PartialUpdateReadPlan _rssid_to_rid;
+    FixedReadPlan _rssid_to_rid;
     std::map<RowsetId, RowsetSharedPtr> _rsid_to_rowset;
 
     // cache flags for filling missing columns

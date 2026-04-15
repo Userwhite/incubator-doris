@@ -57,6 +57,7 @@ class TupleDescriptor;
 
 struct OlapTableIndexSchema {
     int64_t index_id;
+    int64_t row_binlog_id = 0;
     std::vector<SlotDescriptor*> slots;
     int32_t schema_hash;
     std::vector<TabletColumn*> columns;
@@ -80,6 +81,7 @@ public:
 
     TupleDescriptor* tuple_desc() const { return _tuple_desc; }
     const std::vector<OlapTableIndexSchema*>& indexes() const { return _indexes; }
+    const OlapTableIndexSchema* row_binlog_index_schema() const { return _row_binlog_index_schema; }
 
     void to_protobuf(POlapTableSchemaParam* pschema) const;
 
@@ -132,6 +134,7 @@ private:
     TupleDescriptor* _tuple_desc = nullptr;
     mutable POlapTableSchemaParam* _proto_schema = nullptr;
     std::vector<OlapTableIndexSchema*> _indexes;
+    OlapTableIndexSchema* _row_binlog_index_schema = nullptr;
     mutable ObjectPool _obj_pool;
     UniqueKeyUpdateModePB _unique_key_update_mode {UniqueKeyUpdateModePB::UPSERT};
     PartialUpdateNewRowPolicyPB _partial_update_new_row_policy {

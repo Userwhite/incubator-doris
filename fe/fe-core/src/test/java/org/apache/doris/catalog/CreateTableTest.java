@@ -264,6 +264,12 @@ public class CreateTableTest extends TestWithFeService {
                 + "DUPLICATE KEY(k1) DISTRIBUTED BY HASH(k1) BUCKETS 1 "
                 + "PROPERTIES('replication_num'='1','binlog.enable'='true','binlog.format'='ROW');";
         createTable(create);
+
+        Database db = Env.getCurrentInternalCatalog().getDbOrDdlException("test");
+        OlapTable tbl = (OlapTable) db.getTableOrDdlException("row_binlog_normal");
+        Assert.assertTrue(tbl.needRowBinlog());
+        Assert.assertNotNull(tbl.getAutoIncrementGenerator());
+        Assert.assertEquals((long) Column.BINLOG_LSN_AUTO_INC_ID, tbl.getAutoIncrementGenerator().getColumnId());
     }
 
     @Test
@@ -273,6 +279,12 @@ public class CreateTableTest extends TestWithFeService {
                 + "PROPERTIES('replication_num'='1','enable_unique_key_merge_on_write'='true',"
                 + "'binlog.enable'='true','binlog.format'='ROW');";
         createTable(create);
+
+        Database db = Env.getCurrentInternalCatalog().getDbOrDdlException("test");
+        OlapTable tbl = (OlapTable) db.getTableOrDdlException("row_binlog_unique");
+        Assert.assertTrue(tbl.needRowBinlog());
+        Assert.assertNotNull(tbl.getAutoIncrementGenerator());
+        Assert.assertEquals((long) Column.BINLOG_LSN_AUTO_INC_ID, tbl.getAutoIncrementGenerator().getColumnId());
     }
 
     @Test

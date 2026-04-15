@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 #include <sys/file.h>
 
+#include <atomic>
 #include <string>
 #include <thread>
 
@@ -30,8 +31,12 @@
 #include "io/fs/local_file_system.h"
 #include "load/delta_writer/delta_writer.h"
 #include "load/memtable/memtable.h"
+#include "runtime/descriptors.h"
+#include "runtime/thread_context.h"
 #include "runtime/descriptor_helper.h"
 #include "runtime/exec_env.h"
+#include "storage/rowset/group_rowset_writer.h"
+#include "storage/rowset/rowset_writer.h"
 #include "storage/field.h"
 #include "storage/options.h"
 #include "storage/schema.h"
@@ -41,6 +46,196 @@
 #include "storage/utils.h"
 
 namespace doris {
+
+namespace {
+
+void create_tablet_request(int64_t tablet_id, int32_t schema_hash, TCreateTabletReq* request) {
+    request->tablet_id = tablet_id;
+    request->__set_version(1);
+    request->partition_id = 30002;
+    request->tablet_schema.schema_hash = schema_hash;
+    request->tablet_schema.short_key_column_count = 3;
+    request->tablet_schema.keys_type = TKeysType::AGG_KEYS;
+    request->tablet_schema.storage_type = TStorageType::COLUMN;
+    request->__set_storage_format(TStorageFormat::V2);
+
+    TColumn k1;
+    k1.column_name = "k1";
+    k1.__set_is_key(true);
+    k1.column_type.type = TPrimitiveType::TINYINT;
+    request->tablet_schema.columns.push_back(k1);
+
+    TColumn k2;
+    k2.column_name = "k2";
+    k2.__set_is_key(true);
+    k2.column_type.type = TPrimitiveType::SMALLINT;
+    request->tablet_schema.columns.push_back(k2);
+
+    TColumn k3;
+    k3.column_name = "k3";
+    k3.__set_is_key(true);
+    k3.column_type.type = TPrimitiveType::INT;
+    request->tablet_schema.columns.push_back(k3);
+}
+
+TDescriptorTable create_descriptor_tablet() {
+    TDescriptorTableBuilder dtb;
+    TTupleDescriptorBuilder tuple_builder;
+    tuple_builder.add_slot(
+            TSlotDescriptorBuilder().type(TYPE_TINYINT).column_name("k1").column_pos(0).build());
+    tuple_builder.add_slot(
+            TSlotDescriptorBuilder().type(TYPE_SMALLINT).column_name("k2").column_pos(1).build());
+    tuple_builder.add_slot(
+            TSlotDescriptorBuilder().type(TYPE_INT).column_name("k3").column_pos(2).build());
+    tuple_builder.build(&dtb);
+    return dtb.desc_tbl();
+}
+
+class MockRowsetWriter final : public RowsetWriter {
+public:
+    explicit MockRowsetWriter(std::atomic<int>* flush_cnt, bool fail_on_flush = false,
+                              const std::string& flush_error_msg = "mock flush failed")
+            : _flush_cnt(flush_cnt),
+              _fail_on_flush(fail_on_flush),
+              _flush_error_msg(flush_error_msg) {}
+
+    Status init(const RowsetWriterContext& ctx) override {
+        _context = ctx;
+        return Status::OK();
+    }
+
+    Status add_rowset(RowsetSharedPtr) override { return Status::OK(); }
+
+    Status add_rowset_for_linked_schema_change(RowsetSharedPtr) override { return Status::OK(); }
+
+    Status flush() override { return Status::OK(); }
+
+    Status flush_memtable(Block* block, int32_t segment_id, int64_t* flush_size) override {
+        EXPECT_GT(block->rows(), 0);
+        _last_segment_id = segment_id;
+        ++(*_flush_cnt);
+        *flush_size = 1;
+        if (_fail_on_flush) {
+            return Status::InternalError<false>(_flush_error_msg);
+        }
+        return Status::OK();
+    }
+
+    Status build(RowsetSharedPtr& rowset) override {
+        rowset = nullptr;
+        return Status::OK();
+    }
+
+    RowsetSharedPtr manual_build(const RowsetMetaSharedPtr&) override { return nullptr; }
+
+    PUniqueId load_id() override { return _context.load_id; }
+
+    Version version() override { return _context.version; }
+
+    int64_t num_rows() const override { return 0; }
+    int64_t num_rows_updated() const override { return 0; }
+    int64_t num_rows_deleted() const override { return 0; }
+    int64_t num_rows_new_added() const override { return 0; }
+    int64_t num_rows_filtered() const override { return 0; }
+    RowsetId rowset_id() override { return _context.rowset_id; }
+    RowsetTypePB type() const override { return BETA_ROWSET; }
+    int32_t allocate_segment_id() override { return _next_segment_id++; }
+    std::shared_ptr<PartialUpdateInfo> get_partial_update_info() override { return nullptr; }
+    bool is_partial_update() override { return false; }
+
+    int32_t last_segment_id() const { return _last_segment_id; }
+
+private:
+    std::atomic<int>* _flush_cnt;
+    bool _fail_on_flush;
+    std::string _flush_error_msg;
+    int32_t _next_segment_id = 0;
+    int32_t _last_segment_id = -1;
+};
+
+struct GroupFlushTestContext {
+    TCreateTabletReq request;
+    TabletSharedPtr tablet;
+    ObjectPool obj_pool;
+    DescriptorTbl* desc_tbl = nullptr;
+    TupleDescriptor* tuple_desc = nullptr;
+    std::shared_ptr<MemTable> memtable;
+};
+
+class MemTableFlushExecutorGroupFlushTest : public testing::Test {
+protected:
+    void SetUp() override {
+        char buffer[1024];
+        ASSERT_NE(getcwd(buffer, 1024), nullptr);
+        config::storage_root_path = std::string(buffer) + "/flush_test";
+        auto st = io::global_local_filesystem()->delete_directory(config::storage_root_path);
+        ASSERT_TRUE(st.ok()) << st;
+        st = io::global_local_filesystem()->create_directory(config::storage_root_path);
+        ASSERT_TRUE(st.ok()) << st;
+
+        std::vector<StorePath> paths;
+        paths.emplace_back(config::storage_root_path, -1);
+
+        doris::EngineOptions options;
+        options.store_paths = paths;
+        auto engine = std::make_unique<StorageEngine>(options);
+        Status s = engine->open();
+        ASSERT_TRUE(s.ok()) << s.to_string();
+        ExecEnv::GetInstance()->set_storage_engine(std::move(engine));
+    }
+
+    void TearDown() override {
+        ExecEnv::GetInstance()->set_storage_engine(nullptr);
+        EXPECT_EQ(system("rm -rf ./flush_test"), 0);
+        EXPECT_TRUE(io::global_local_filesystem()
+                            ->delete_directory(std::string(getenv("DORIS_HOME")) + "/" +
+                                               UNUSED_PREFIX)
+                            .ok());
+    }
+
+    StorageEngine* storage_engine() { return ExecEnv::GetInstance()->storage_engine(); }
+
+    void prepare_group_flush_test_context(int64_t tablet_id, int32_t schema_hash,
+                                          GroupFlushTestContext* ctx) {
+        create_tablet_request(tablet_id, schema_hash, &ctx->request);
+        auto profile = std::make_unique<RuntimeProfile>("CreateTablet");
+        ASSERT_TRUE(storage_engine()->create_tablet(ctx->request, profile.get()).ok());
+
+        ctx->tablet = storage_engine()->tablet_manager()->get_tablet(ctx->request.tablet_id);
+        ASSERT_NE(ctx->tablet, nullptr);
+
+        TDescriptorTable tdesc_tbl = create_descriptor_tablet();
+        ASSERT_TRUE(DescriptorTbl::create(&ctx->obj_pool, tdesc_tbl, &ctx->desc_tbl).ok());
+        ctx->tuple_desc = ctx->desc_tbl->get_tuple_descriptor(0);
+        ASSERT_NE(ctx->tuple_desc, nullptr);
+
+        ctx->memtable = std::make_shared<MemTable>(ctx->request.tablet_id, ctx->tablet->tablet_schema(),
+                                                   &ctx->tuple_desc->slots(), ctx->tuple_desc,
+                                                   false, nullptr,
+                                                   thread_context()->resource_ctx());
+        Block block;
+        for (const auto& slot : ctx->tuple_desc->slots()) {
+            block.insert(ColumnWithTypeAndName(slot->get_empty_mutable_column(), slot->type(),
+                                               slot->col_name()));
+        }
+        auto cols = block.mutate_columns();
+        int8_t k1 = -127;
+        int16_t k2 = -32767;
+        int32_t k3 = -2147483647;
+        cols[0]->insert_data((const char*)&k1, sizeof(k1));
+        cols[1]->insert_data((const char*)&k2, sizeof(k2));
+        cols[2]->insert_data((const char*)&k3, sizeof(k3));
+        ASSERT_TRUE(ctx->memtable->insert(&block, {0}).ok());
+    }
+
+    void drop_tablet(const TCreateTabletReq& request) {
+        EXPECT_TRUE(storage_engine()->tablet_manager()
+                            ->drop_tablet(request.tablet_id, request.replica_id, false)
+                            .ok());
+    }
+};
+
+} // namespace
 
 void set_up() {
     char buffer[1024];
@@ -205,6 +400,86 @@ TEST(MemTableFlushExecutorTest, TestThreadPoolMinMaxRelationship) {
 
     // Cleanup
     tear_down();
+}
+
+TEST_F(MemTableFlushExecutorGroupFlushTest, TestGroupFlushToken) {
+    SCOPED_INIT_THREAD_CONTEXT();
+
+    {
+        GroupFlushTestContext ctx;
+        prepare_group_flush_test_context(10001, 270068373, &ctx);
+
+        std::atomic<int> data_flush_cnt = 0;
+        std::atomic<int> binlog_flush_cnt = 0;
+        auto data_writer = std::make_shared<MockRowsetWriter>(&data_flush_cnt);
+        auto binlog_writer = std::make_shared<MockRowsetWriter>(&binlog_flush_cnt);
+        RowsetWriterContext data_ctx;
+        data_ctx.tablet_schema = ctx.tablet->tablet_schema();
+        data_ctx.load_id.set_hi(1);
+        data_ctx.load_id.set_lo(1);
+        ASSERT_TRUE(data_writer->init(data_ctx).ok());
+        RowsetWriterContext binlog_ctx = data_ctx;
+        binlog_ctx.write_binlog_opt().mark_binlog_writer();
+        ASSERT_TRUE(binlog_writer->init(binlog_ctx).ok());
+
+        auto group_writer = std::make_shared<GroupRowsetWriter>();
+        group_writer->set_data_writer(data_writer);
+        group_writer->set_row_binlog_writer(binlog_writer);
+        ASSERT_TRUE(group_writer->init(data_ctx).ok());
+
+        std::shared_ptr<FlushToken> flush_token;
+        ASSERT_TRUE(storage_engine()->memtable_flush_executor()
+                            ->create_flush_token(flush_token, group_writer, false, nullptr)
+                            .ok());
+        ASSERT_TRUE(flush_token->submit(ctx.memtable).ok());
+        ASSERT_TRUE(flush_token->wait().ok());
+        EXPECT_EQ(1, data_flush_cnt.load());
+        EXPECT_EQ(1, binlog_flush_cnt.load());
+        EXPECT_EQ(data_writer->last_segment_id(), binlog_writer->last_segment_id());
+        EXPECT_EQ(1, flush_token->get_stats().flush_finish_count.load());
+        EXPECT_EQ(0, flush_token->get_stats().flush_submit_count.load());
+
+        drop_tablet(ctx.request);
+    }
+
+    {
+        GroupFlushTestContext ctx;
+        prepare_group_flush_test_context(10002, 270068374, &ctx);
+
+        std::atomic<int> data_flush_cnt = 0;
+        std::atomic<int> binlog_flush_cnt = 0;
+        auto data_writer = std::make_shared<MockRowsetWriter>(&data_flush_cnt);
+        auto binlog_writer = std::make_shared<MockRowsetWriter>(&binlog_flush_cnt, true,
+                                                                "binlog flush failed");
+        RowsetWriterContext data_ctx;
+        data_ctx.tablet_schema = ctx.tablet->tablet_schema();
+        data_ctx.load_id.set_hi(2);
+        data_ctx.load_id.set_lo(2);
+        ASSERT_TRUE(data_writer->init(data_ctx).ok());
+        RowsetWriterContext binlog_ctx = data_ctx;
+        binlog_ctx.write_binlog_opt().mark_binlog_writer();
+        ASSERT_TRUE(binlog_writer->init(binlog_ctx).ok());
+
+        auto group_writer = std::make_shared<GroupRowsetWriter>();
+        group_writer->set_data_writer(data_writer);
+        group_writer->set_row_binlog_writer(binlog_writer);
+        ASSERT_TRUE(group_writer->init(data_ctx).ok());
+
+        std::shared_ptr<FlushToken> flush_token;
+        ASSERT_TRUE(storage_engine()->memtable_flush_executor()
+                            ->create_flush_token(flush_token, group_writer, false, nullptr)
+                            .ok());
+        ASSERT_TRUE(flush_token->submit(ctx.memtable).ok());
+
+        Status wait_st = flush_token->wait();
+        EXPECT_FALSE(wait_st.ok());
+        EXPECT_NE(wait_st.to_string().find("binlog flush failed"), std::string::npos);
+        EXPECT_EQ(1, binlog_flush_cnt.load());
+        EXPECT_EQ(0, flush_token->get_stats().flush_finish_count.load());
+        EXPECT_EQ(0, flush_token->get_stats().flush_submit_count.load());
+
+        drop_tablet(ctx.request);
+    }
 }
 
 } // namespace doris

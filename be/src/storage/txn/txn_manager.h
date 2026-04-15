@@ -73,16 +73,13 @@ struct TxnPublishInfo {
 struct TabletTxnInfo {
     PUniqueId load_id;
     RowsetSharedPtr rowset;
-    // Optional: row binlog rowset built together with `rowset`.
-    RowsetSharedPtr row_binlog_rowset;
-    // Optional: extra rowsets attached to the same txn (exclude primary `rowset`).
-    // NOTE: row binlog rowset (if any) is also recorded here for lifecycle management.
+    // The list of rowsets committed along with the transaction rowset
+    // currently contains only the binlog<Row> rowset.
     std::vector<RowsetSharedPtr> attach_rowsets;
     PendingRowsetGuard pending_rs_guard;
     bool unique_key_merge_on_write {false};
     DeleteBitmapPtr delete_bitmap;
-    // Optional: delete bitmap delvecs originated from binlog (persisted separately from normal
-    // delete bitmap).
+    // copy delete_bitmap of data rowset to binlog
     DeleteBitmapPtr binlog_delvec;
     // records rowsets calc in commit txn
     RowsetIdUnorderedSet rowset_ids;
@@ -177,8 +174,7 @@ public:
                       TTransactionId transaction_id, const PUniqueId& load_id,
                       const RowsetSharedPtr& rowset_ptr, PendingRowsetGuard guard, bool is_recovery,
                       std::shared_ptr<PartialUpdateInfo> partial_update_info = nullptr,
-                      RowsetSharedPtr row_binlog_rowset = nullptr,
-                      std::vector<RowsetSharedPtr> attach_rowsets = {});
+                      std::vector<RowsetSharedPtr>* attach_rowsets = nullptr);
 
     Status publish_txn(TPartitionId partition_id, const TabletSharedPtr& tablet,
                        TTransactionId transaction_id, const Version& version,
@@ -197,13 +193,7 @@ public:
                       TTabletId tablet_id, TabletUid tablet_uid, const PUniqueId& load_id,
                       const RowsetSharedPtr& rowset_ptr, PendingRowsetGuard guard, bool is_recovery,
                       std::shared_ptr<PartialUpdateInfo> partial_update_info = nullptr,
-                      RowsetSharedPtr row_binlog_rowset = nullptr,
-                      std::vector<RowsetSharedPtr> attach_rowsets = {});
-
-    // Attach row binlog rowset to an existing committed txn (used during recovery).
-    Status attach_row_binlog_rowset(TPartitionId partition_id, TTransactionId transaction_id,
-                                    TTabletId tablet_id, TabletUid tablet_uid,
-                                    RowsetSharedPtr row_binlog_rowset);
+                      std::vector<RowsetSharedPtr>* attach_rowsets = nullptr);
 
     // remove a txn from txn manager
     // not persist rowset meta because

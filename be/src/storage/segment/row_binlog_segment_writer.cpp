@@ -20,7 +20,7 @@
 #include "storage/binlog.h"
 #include "storage/olap_utils.h"
 #include "core/column/column_nullable.h"
-#include "core/column/columns_number.h"
+#include "core/column/column_vector.h"
 #include "core/block/column_with_type_and_name.h"
 #include "storage/iterator/olap_data_convertor.h"
 
@@ -58,12 +58,12 @@ Status RowBinlogSegmentWriter::init() {
 
     const TabletSchemaSPtr& source_schema = _binlog_opts.source_tablet_schema;
     if (UNLIKELY(source_schema == nullptr)) {
-        return Status::InternalError("row binlog writer missing source_tablet_schema");
+        return Status::InternalError("binlog<row> writer missing source_tablet_schema");
     }
 
-    uint32_t lsn_col_id = _tablet_schema->field_index(BINLOG_LSN_COL);
-    CHECK(lsn_col_id >= 0) << "row binlog schema missing __DORIS_BINLOG_LSN__";
-    _binlog_col_start_id = lsn_col_id;
+    int lsn_col_id = _tablet_schema->field_index(BINLOG_LSN_COL);
+    CHECK(lsn_col_id >= 0) << "binlog<row> schema missing __DORIS_BINLOG_LSN__";
+    _binlog_col_start_id = static_cast<uint32_t>(lsn_col_id);
     _normal_col_start_id = lsn_col_id == 0 ? BINLOG_COLNUM : 0;
 
     int32_t normal_col_num = source_schema->num_visible_columns();
@@ -103,7 +103,7 @@ Status RowBinlogSegmentWriter::append_block(const Block* block, size_t row_pos, 
 
     const TabletSchemaSPtr& source_schema = _binlog_opts.source_tablet_schema;
     if (UNLIKELY(source_schema == nullptr)) {
-        return Status::InternalError("row binlog writer missing source_tablet_schema");
+        return Status::InternalError("binlog<row> writer missing source_tablet_schema");
     }
 
     bool is_partial_update = _binlog_opts.source_partial_update_info &&

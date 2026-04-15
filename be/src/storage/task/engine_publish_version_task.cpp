@@ -456,9 +456,17 @@ Status publish_version_and_add_rowset(StorageEngine& engine, int64_t partition_i
 
     // Add visible rowset to tablet
     int64_t start_time = MonotonicMicros();
-    if (extend_tablet_txn_info_lifetime != nullptr &&
-        extend_tablet_txn_info_lifetime->row_binlog_rowset != nullptr) {
-        result = tablet->add_inc_rowset(rowset, extend_tablet_txn_info_lifetime->row_binlog_rowset);
+    RowsetSharedPtr row_binlog_rowset;
+    if (extend_tablet_txn_info_lifetime != nullptr) {
+        for (const auto& rs : extend_tablet_txn_info_lifetime->attach_rowsets) {
+            if (rs != nullptr && rs->rowset_meta() != nullptr && rs->rowset_meta()->is_row_binlog()) {
+                row_binlog_rowset = rs;
+                break;
+            }
+        }
+    }
+    if (row_binlog_rowset != nullptr) {
+        result = tablet->add_inc_rowset(rowset, row_binlog_rowset);
     } else {
         result = tablet->add_inc_rowset(rowset);
     }

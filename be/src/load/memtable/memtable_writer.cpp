@@ -30,7 +30,6 @@
 #include "common/status.h"
 #include "core/block/block.h"
 #include "io/fs/file_writer.h" // IWYU pragma: keep
-#include "exec/sink/autoinc_buffer.h"
 #include "load/memtable/memtable.h"
 #include "load/memtable/memtable_flush_executor.h"
 #include "load/memtable/memtable_memory_limiter.h"
@@ -40,11 +39,9 @@
 #include "storage/rowset/beta_rowset_writer.h"
 #include "storage/rowset/group_rowset_writer.h"
 #include "storage/rowset/rowset_writer.h"
-#include "storage/binlog.h"
 #include "storage/schema_change/schema_change.h"
 #include "storage/storage_engine.h"
 #include "storage/tablet/tablet_schema.h"
-#include "storage/tablet_info.h"
 #include "util/mem_info.h"
 #include "util/stopwatch.hpp"
 
@@ -83,7 +80,8 @@ Status MemTableWriter::init(std::shared_ptr<RowsetWriter> rowset_writer,
     // we can make sure same keys sort in the same order in all replicas.
     RETURN_IF_ERROR(
             ExecEnv::GetInstance()->storage_engine().memtable_flush_executor()->create_flush_token(
-                    _flush_token, _rowset_writer, _req.is_high_priority, wg_sptr));
+                    _flush_token, _rowset_writer, _req.is_high_priority, wg_sptr,
+                    _req.table_schema_param));
 
     _is_init = true;
     return Status::OK();
@@ -166,18 +164,7 @@ Status MemTableWriter::_flush_memtable_async() {
         _freezed_mem_tables.push_back(memtable);
     }
 
-    std::shared_ptr<std::vector<int128_t>> lsn_ids = nullptr;
-    if (_rowset_writer->context().write_binlog_opt().need_build_binlog()) {
-        auto* group_rowset_writer = typeid_cast<GroupRowsetWriter*>(_rowset_writer.get());
-        DCHECK(group_rowset_writer != nullptr);
-        const TabletSchemaSPtr& row_binlog_schema =
-                group_rowset_writer->row_binlog_writer()->context().tablet_schema;
-        RETURN_IF_ERROR(allocate_row_binlog_lsn_ids(
-                _req.table_schema_param->db_id(), _req.table_schema_param->table_id(),
-                row_binlog_schema, memtable->raw_rows(), &lsn_ids));
-    }
-
-    return _flush_token->submit(memtable, lsn_ids);
+    return _flush_token->submit(memtable);
 }
 
 Status MemTableWriter::flush_async() {

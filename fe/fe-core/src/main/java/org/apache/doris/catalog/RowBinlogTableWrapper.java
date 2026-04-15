@@ -20,14 +20,14 @@ package org.apache.doris.catalog;
 import com.google.common.base.Preconditions;
 
 /**
- * A lightweight wrapper base for read binlog<row> of table
+ * A lightweight wrapper base for read binlog<Row> of table
  */
 public class RowBinlogTableWrapper extends OlapTableWrapper {
 
     private final MaterializedIndexMeta rowBinlogMeta;
 
     public RowBinlogTableWrapper(OlapTable originTable) {
-        super(originTable, originTable.getName(), originTable.generateTableRowBinlogSchema(), KeysType.DUP_KEYS);
+        super(originTable, originTable.getName(), originTable.getRowBinlogMeta().getSchema(), KeysType.DUP_KEYS);
         this.rowBinlogMeta = originTable.getRowBinlogMeta();
         Preconditions.checkNotNull(rowBinlogMeta, "row binlog meta is null, table=%s", originTable.getName());
         this.setBaseIndexId(rowBinlogMeta.getIndexId());

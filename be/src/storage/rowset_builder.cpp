@@ -277,8 +277,8 @@ Status BaseRowsetBuilder::_init_context_common_fields(RowsetWriterContext& conte
     context.index_id = _req.index_id;
     context.tablet = _tablet;
     context.enable_segcompaction = !_req.table_schema_param->is_partial_update();
-    if (_req.write_req_type == WriteRequestType::ROW_BINLOG || 
-        tablet()->enable_row_binlog()) {
+    if (_req.write_req_type == WriteRequestType::ROW_BINLOG ||
+        _req.write_req_type == WriteRequestType::DATA_IN_GROUP) {
         context.enable_segcompaction = false;
     }
     context.write_type = DataWriteType::TYPE_DIRECT;
@@ -394,8 +394,7 @@ Status RowsetBuilder::commit_txn() {
     // Transfer ownership of `PendingRowsetGuard` to `TxnManager`
     Status res = _engine.txn_manager()->commit_txn(
             _req.partition_id, *tablet(), _req.txn_id, _req.load_id, _rowset,
-            std::move(_pending_rs_guard), false, _partial_update_info, nullptr,
-            std::move(_attach_rowsets));
+            std::move(_pending_rs_guard), false, _partial_update_info, &_attach_rowsets);
 
     if (!res && !res.is<PUSH_TRANSACTION_ALREADY_EXIST>()) {
         LOG(WARNING) << "Failed to commit txn: " << _req.txn_id
@@ -403,6 +402,7 @@ Status RowsetBuilder::commit_txn() {
         return res;
     }
     if (_tablet->enable_unique_key_merge_on_write()) {
+        // no need to update binlog_delvec, it'll be updated in publish phase
         _engine.txn_manager()->set_txn_related_delete_bitmap(
                 _req.partition_id, _req.txn_id, tablet()->tablet_id(), tablet()->tablet_uid(), true,
                 _delete_bitmap, *_rowset_ids, _partial_update_info);
@@ -427,19 +427,25 @@ Status BaseRowsetBuilder::cancel() {
 Status BaseRowsetBuilder::_build_current_tablet_schema(
         int64_t index_id, const OlapTableSchemaParam* table_schema_param,
         const TabletSchema& ori_tablet_schema) {
-    // find the right index id
-    int i = 0;
-    auto indexes = table_schema_param->indexes();
-    for (; i < indexes.size(); i++) {
-        if (indexes[i]->index_id == index_id) {
+    const OlapTableIndexSchema* index_schema = nullptr;
+    for (const auto* schema : table_schema_param->indexes()) {
+        if (schema->index_id == index_id) {
+            index_schema = schema;
             break;
         }
     }
-    if (!indexes.empty() && !indexes[i]->columns.empty() &&
-        indexes[i]->columns[0]->unique_id() >= 0) {
+    if (index_schema == nullptr) {
+        const auto* row_binlog_index_schema = table_schema_param->row_binlog_index_schema();
+        if (row_binlog_index_schema != nullptr && row_binlog_index_schema->index_id == index_id) {
+            index_schema = row_binlog_index_schema;
+        }
+    }
+
+    if (index_schema != nullptr && !index_schema->columns.empty() &&
+        index_schema->columns[0]->unique_id() >= 0) {
         _tablet_schema->shawdow_copy_without_columns(ori_tablet_schema);
         _tablet_schema->build_current_tablet_schema(
-                index_id, cast_set<int32_t>(table_schema_param->version()), indexes[i],
+                index_id, cast_set<int32_t>(table_schema_param->version()), index_schema,
                 ori_tablet_schema);
     } else {
         _tablet_schema->copy_from(ori_tablet_schema);

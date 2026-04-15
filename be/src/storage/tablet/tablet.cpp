@@ -331,7 +331,7 @@ Status Tablet::_init_once_action() {
         RowsetSharedPtr rowset;
         res = create_rowset(row_binlog_rs_meta, &rowset);
         if (!res.ok()) {
-            LOG(WARNING) << "fail to init row_binlog rowset. tablet_id:" << tablet_id()
+            LOG(WARNING) << "fail to init binlog<row> rowset. tablet_id:" << tablet_id()
                          << ", schema_hash:" << schema_hash() << ", version=" << version
                          << ", res:" << res;
             return res;
@@ -743,7 +743,7 @@ Status Tablet::add_row_binlog_rowset(RowsetSharedPtr row_binlog_rowset) {
             return Status::OK();
         }
         return Status::Error<PUSH_VERSION_ALREADY_EXIST>(
-                "binlog version already exist. exist row_binlog_rowset_id={}, version={}, tablet={}",
+                "binlog<row> version already exists. existing rowset_id={}, version={}, tablet={}",
                 it->second != nullptr ? it->second->rowset_id().to_string() : "0",
                 version.to_string(), tablet_id());
     }
@@ -780,7 +780,7 @@ Status Tablet::add_inc_rowset(const RowsetSharedPtr& rowset, RowsetSharedPtr row
                 return Status::OK();
             }
             return Status::Error<PUSH_VERSION_ALREADY_EXIST>(
-                    "binlog version already exist. exist row_binlog_rowset_id={}, version={}, tablet={}",
+                    "binlog<row> version already exists. existing rowset_id={}, version={}, tablet={}",
                     it->second != nullptr ? it->second->rowset_id().to_string() : "0",
                     version.to_string(), tablet_id());
         }
@@ -1620,24 +1620,32 @@ bool Tablet::do_tablet_meta_checkpoint() {
         rs_meta->set_remove_from_rowset_meta();
     }
 
-    // Remove row binlog metas from row binlog meta store after tablet meta is checkpointed.
-    // Row binlog metas are persisted separately and should be GC'ed in checkpoint just like rowset
-    // metas.
-    for (const auto& [_, rs_meta] : _tablet_meta->all_row_binlog_rs_metas()) {
+    // Remove row binlog metas from rowset meta store after tablet meta is checkpointed.
+    // Row binlog metas are stored in meta KV with key:
+    //   {kRowBinlogPrefix}{tablet_uid}_{base_rowset_id}_{row_binlog_rowset_id}
+    // Here we only have row binlog rowset metas, so locate base rowset by version.
+    const auto& base_rs_metas = _tablet_meta->all_rs_metas();
+    for (const auto& [_, rb_meta] : _tablet_meta->all_row_binlog_rs_metas()) {
         // Reuse the same flag to avoid repeated removals across checkpoints.
-        if (rs_meta->is_remove_from_rowset_meta()) {
+        if (rb_meta->is_remove_from_rowset_meta()) {
             continue;
         }
-        std::string rb_key = make_row_binlog_meta_key(tablet_uid(), rs_meta->start_version(),
-                                                      rs_meta->rowset_id());
-        std::string rb_val;
-        if (_data_dir->get_meta()->key_may_exist(META_COLUMN_FAMILY_INDEX, rb_key, &rb_val)) {
-            RETURN_FALSE_IF_ERROR(RowsetMetaManager::remove_row_binlog(
-                    _data_dir->get_meta(), rb_key.substr(kRowBinlogPrefix.size())));
-            VLOG_NOTICE << "remove row binlog rowset id from meta store because it is already "
-                        << "persistent with tablet meta, rowset_id=" << rs_meta->rowset_id();
+
+        const auto base_it = base_rs_metas.find(rb_meta->version());
+        if (base_it == base_rs_metas.end()) {
+            LOG(WARNING) << "failed to locate base rowset meta for binlog<row> by version, tablet="
+                         << tablet_id() << ", version=" << rb_meta->version().to_string()
+                         << ", binlog_rowset_id=" << rb_meta->rowset_id();
+            rb_meta->set_remove_from_rowset_meta();
+            continue;
         }
-        rs_meta->set_remove_from_rowset_meta();
+
+        const auto& base_rs_meta = base_it->second;
+        RETURN_FALSE_IF_ERROR(RowsetMetaManager::remove_row_binlog(
+                _data_dir->get_meta(), tablet_uid(), base_rs_meta->rowset_id(), rb_meta->rowset_id()));
+        VLOG_NOTICE << "remove binlog<row> meta from meta store, base_rowset_id="
+                    << base_rs_meta->rowset_id() << ", binlog_rowset_id=" << rb_meta->rowset_id();
+        rb_meta->set_remove_from_rowset_meta();
     }
 
     if (keys_type() == UNIQUE_KEYS && enable_unique_key_merge_on_write()) {

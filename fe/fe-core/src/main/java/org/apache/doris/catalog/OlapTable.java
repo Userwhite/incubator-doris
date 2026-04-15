@@ -2330,7 +2330,8 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         return getBinlogConfig().isEnableForStreaming();
     }
 
-    public void createNewRowBinlogMeta(IdGeneratorBuffer idGeneratorBuffer, long dbId) {
+    public void createNewRowBinlogMeta(IdGeneratorBuffer idGeneratorBuffer, long dbId)
+            throws DdlException {
         writeLock();
         try {
             List<Column> schema = generateTableRowBinlogSchema();
@@ -2343,8 +2344,11 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             rowBinlogMeta.setRowBinlogIndexId(indexId);
             this.setRowBinlogMeta(rowBinlogMeta, BinlogUtils.wrapBinlogName(this.name));
 
-            // Binlog<Row> LSN 复用 auto-inc allocator，但它不是用户可见的 AUTO_INCREMENT 列。
-            // 统一在 initAutoIncrementGenerator() 里初始化（这里调用一次，保证在线生效）。
+            // todo: support multi column for autoIncrementGenerator
+            if (autoIncrementGenerator != null) {
+                throw new DdlException("enable binlog isn't allowed on the table with auto-increment column");
+            }
+
             initAutoIncrementGenerator(dbId);
         } finally {
             writeUnlock();
@@ -2409,7 +2413,7 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         }
 
         tableRowBinlogSchema.add(new ColumnDef(Column.BINLOG_LSN_COL, ScalarType.createType(PrimitiveType.LARGEINT),
-                false, AggregateType.NONE, false, 1, ColumnDef.DefaultValue.NOT_SET,
+                false, AggregateType.NONE, false, -1, ColumnDef.DefaultValue.NOT_SET,
                 "doris binlog lsn column", false).toColumn());
         tableRowBinlogSchema.add(new ColumnDef(Column.BINLOG_OPERATION_COL,
                 ScalarType.createType(PrimitiveType.BIGINT), false, AggregateType.NONE, true, -1,
@@ -3294,10 +3298,6 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
     }
 
     public void initAutoIncrementGenerator(long dbId) {
-        if (autoIncrementGenerator != null) {
-            autoIncrementGenerator.setEditLog(Env.getCurrentEnv().getEditLog());
-            return;
-        }
         for (Column column : fullSchema) {
             if (column.isAutoInc()) {
                 autoIncrementGenerator = new AutoIncrementGenerator(dbId, id, column.getUniqueId(),
@@ -3307,18 +3307,13 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             }
         }
 
-        // Row binlog LSN allocator: not a real AUTO_INCREMENT column, but uses the same FE allocator.
-        if (autoIncrementGenerator == null && needRowBinlog()) {
+        // use auto-increment allocator to improve locality of Binlog LSN.
+        Preconditions.checkState(autoIncrementGenerator == null);
+        if (needRowBinlog()) {
             MaterializedIndexMeta rowBinlogMeta = getRowBinlogMeta();
-            if (rowBinlogMeta != null) {
-                for (Column column : rowBinlogMeta.getSchema(true)) {
-                    if (column.getName().equalsIgnoreCase(Column.BINLOG_LSN_COL)) {
-                        autoIncrementGenerator = new AutoIncrementGenerator(dbId, id, column.getUniqueId(), 1L);
-                        autoIncrementGenerator.setEditLog(Env.getCurrentEnv().getEditLog());
-                        break;
-                    }
-                }
-            }
+            Preconditions.checkNotNull(rowBinlogMeta);
+            autoIncrementGenerator = new AutoIncrementGenerator(dbId, id, Column.BINLOG_LSN_AUTO_INC_ID, 1L);
+            autoIncrementGenerator.setEditLog(Env.getCurrentEnv().getEditLog());
         }
     }
 

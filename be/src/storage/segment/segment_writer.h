@@ -44,7 +44,7 @@ namespace doris {
 class Block;
 class IOlapColumnDataAccessor;
 class OlapBlockDataConvertor;
-class PartialUpdateInfo;
+struct PartialUpdateInfo;
 struct MowContext;
 
 // TODO(lingbin): Should be a conf that can be dynamically adjusted, or a member in the context
@@ -82,6 +82,29 @@ struct SegmentWriterOptions {
     std::shared_ptr<MowContext> mow_ctx;
 };
 
+class SegmentWriteBinlogLsnMap {
+public:
+    void insert_seg_lsn(int64_t seg_id, std::shared_ptr<std::vector<int128_t>> lsn_ids) {
+        std::lock_guard<std::mutex> l(_mutex);
+        _seg_id_to_lsn_ids.emplace(seg_id, std::move(lsn_ids));
+    }
+
+    void remove_seg(int64_t seg_id) {
+        std::lock_guard<std::mutex> l(_mutex);
+        _seg_id_to_lsn_ids.erase(seg_id);
+    }
+
+    std::shared_ptr<const std::vector<int128_t>> get_seg_lsn(int64_t seg_id) const {
+        std::lock_guard<std::mutex> l(_mutex);
+        DCHECK(_seg_id_to_lsn_ids.contains(seg_id));
+        return _seg_id_to_lsn_ids.at(seg_id);
+    }
+
+private:
+    mutable std::mutex _mutex;
+    std::map<int64_t, std::shared_ptr<std::vector<int128_t>>> _seg_id_to_lsn_ids;
+};
+
 struct SegmentWriteBinlogOptions {
 public:
     bool write_before = false;
@@ -96,24 +119,24 @@ public:
     DataWriteType source_write_type = DataWriteType::TYPE_DEFAULT;
 
     void insert_seg_lsn(int64_t seg_id, std::shared_ptr<std::vector<int128_t>> lsn_ids) {
-        std::lock_guard<std::mutex> l(_mutex);
-        seg_id_to_lsn_ids.emplace(seg_id, lsn_ids);
+        DCHECK(lsn_map != nullptr);
+        lsn_map->insert_seg_lsn(seg_id, std::move(lsn_ids));
     }
 
     void remove_seg(int64_t seg_id) {
-        std::lock_guard<std::mutex> l(_mutex);
-        seg_id_to_lsn_ids.erase(seg_id);
+        DCHECK(lsn_map != nullptr);
+        lsn_map->remove_seg(seg_id);
     }
 
-    std::shared_ptr<const std::vector<int128_t>> get_seg_lsn(int64_t seg_id) {
-        std::lock_guard<std::mutex> l(_mutex);
-        DCHECK(seg_id_to_lsn_ids.contains(seg_id));
-        return seg_id_to_lsn_ids[seg_id];
+    std::shared_ptr<const std::vector<int128_t>> get_seg_lsn(int64_t seg_id) const {
+        DCHECK(lsn_map != nullptr);
+        return lsn_map->get_seg_lsn(seg_id);
     }
 
-private:
-    std::mutex _mutex;
-    std::map<int64_t, std::shared_ptr<std::vector<int128_t>>> seg_id_to_lsn_ids;
+    // Shared LSN storage for row-binlog writers.
+    // Keep it as a pointer so SegmentWriteBinlogOptions stays copyable.
+    std::shared_ptr<SegmentWriteBinlogLsnMap> lsn_map =
+            std::make_shared<SegmentWriteBinlogLsnMap>();
 };
 
 using TabletSharedPtr = std::shared_ptr<Tablet>;
@@ -123,14 +146,14 @@ public:
     explicit SegmentWriter(io::FileWriter* file_writer, uint32_t segment_id,
                            TabletSchemaSPtr tablet_schema, BaseTabletSPtr tablet, DataDir* data_dir,
                            const SegmentWriterOptions& opts, IndexFileWriter* inverted_file_writer);
-    ~SegmentWriter();
+    virtual ~SegmentWriter();
 
-    Status init();
+    virtual Status init();
 
     // for vertical compaction
-    Status init(const std::vector<uint32_t>& col_ids, bool has_key);
+    virtual Status init(const std::vector<uint32_t>& col_ids, bool has_key);
 
-    Status append_block(const Block* block, size_t row_pos, size_t num_rows);
+    virtual Status append_block(const Block* block, size_t row_pos, size_t num_rows);
     Status probe_key_for_mow(std::string key, std::size_t segment_pos, bool have_input_seq_column,
                              bool have_delete_sign,
                              const std::vector<RowsetSharedPtr>& specified_rowsets,
@@ -233,7 +256,7 @@ private:
     bool _is_mow();
     bool _is_mow_with_cluster_key();
 
-private:
+protected:
     uint32_t _segment_id;
     TabletSchemaSPtr _tablet_schema;
     BaseTabletSPtr _tablet;

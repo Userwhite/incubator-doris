@@ -459,6 +459,14 @@ public:
     void replace_column(size_t pos, TabletColumn new_col);
     const std::vector<TabletColumnPtr>& columns() const;
     size_t num_columns() const { return _num_columns; }
+    size_t num_visible_columns() const {
+        size_t invisible_col_num = (_delete_sign_idx != -1) + (_sequence_col_idx != -1) + (_version_col_idx != -1);
+        return (_num_columns - invisible_col_num);   
+    }
+    size_t num_visible_value_columns() const {
+        size_t invisible_col_num = (_delete_sign_idx != -1) + (_sequence_col_idx != -1) + (_version_col_idx != -1);
+        return (_num_columns - invisible_col_num) - _num_key_columns;
+    }
     size_t num_key_columns() const { return _num_key_columns; }
     const std::vector<uint32_t>& cluster_key_uids() const { return _cluster_key_uids; }
     size_t num_null_columns() const { return _num_null_columns; }
