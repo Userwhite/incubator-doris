@@ -339,6 +339,8 @@ if (COMPILER_CLANG)
 
     add_compile_options(-fcolor-diagnostics
                         -Wpedantic
+                        -Wshadow
+                        -Wshadow-field
                         -Wunused
                         -Wunused-command-line-argument
                         -Wunused-exception-parameter

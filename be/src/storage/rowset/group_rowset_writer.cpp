@@ -31,35 +31,25 @@ void GroupRowsetWriter::set_row_binlog_writer(const RowsetWriterSharedPtr& row_b
 
 Status GroupRowsetWriter::flush_rowsets() {
     RETURN_IF_ERROR(_txn_rowset_writer->flush());
-    if (_row_binlog_rowset_writer) {
-        RETURN_IF_ERROR(_row_binlog_rowset_writer->flush());
-    }
+    RETURN_IF_ERROR(_row_binlog_rowset_writer->flush());
     return Status::OK();
 }
 
 Status GroupRowsetWriter::build_rowsets(std::vector<RowsetSharedPtr>& rowsets) {
     RETURN_IF_ERROR(_txn_rowset_writer->build(rowsets.at(0)));
-    if (_row_binlog_rowset_writer) {
-        RETURN_IF_ERROR(_row_binlog_rowset_writer->build(rowsets.at(1)));
-    }
+    RETURN_IF_ERROR(_row_binlog_rowset_writer->build(rowsets.at(1)));
     return Status::OK();
 }
 
 Status GroupRowsetWriter::flush_memtable(Block* block, int32_t segment_id, int64_t* flush_size) {
-    if (!_row_binlog_rowset_writer) {
-        return _txn_rowset_writer->flush_memtable(block, segment_id, flush_size);
-    }
-
     RETURN_IF_ERROR(_txn_rowset_writer->flush_memtable(block, segment_id, flush_size));
-    // Keep legacy behavior: the last flush overwrites `flush_size`.
-    return _row_binlog_rowset_writer->flush_memtable(block, segment_id, flush_size);
+    RETURN_IF_ERROR(_row_binlog_rowset_writer->flush_memtable(block, segment_id, flush_size));
+    return Status::OK();
 }
 
 Status GroupRowsetWriter::flush_single_block(const Block* block) {
     RETURN_IF_ERROR(_txn_rowset_writer->flush_single_block(block));
-    if (_row_binlog_rowset_writer) {
-        RETURN_IF_ERROR(_row_binlog_rowset_writer->flush_single_block(block));
-    }
+    RETURN_IF_ERROR(_row_binlog_rowset_writer->flush_single_block(block));
     return Status::OK();
 }
 

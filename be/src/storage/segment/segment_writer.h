@@ -82,63 +82,6 @@ struct SegmentWriterOptions {
     std::shared_ptr<MowContext> mow_ctx;
 };
 
-class SegmentWriteBinlogLsnMap {
-public:
-    void insert_seg_lsn(int64_t seg_id, std::shared_ptr<std::vector<int128_t>> lsn_ids) {
-        std::lock_guard<std::mutex> l(_mutex);
-        _seg_id_to_lsn_ids.emplace(seg_id, std::move(lsn_ids));
-    }
-
-    void remove_seg(int64_t seg_id) {
-        std::lock_guard<std::mutex> l(_mutex);
-        _seg_id_to_lsn_ids.erase(seg_id);
-    }
-
-    std::shared_ptr<const std::vector<int128_t>> get_seg_lsn(int64_t seg_id) const {
-        std::lock_guard<std::mutex> l(_mutex);
-        DCHECK(_seg_id_to_lsn_ids.contains(seg_id));
-        return _seg_id_to_lsn_ids.at(seg_id);
-    }
-
-private:
-    mutable std::mutex _mutex;
-    std::map<int64_t, std::shared_ptr<std::vector<int128_t>>> _seg_id_to_lsn_ids;
-};
-
-struct SegmentWriteBinlogOptions {
-public:
-    bool write_before = false;
-
-    // Source (data writer) information needed for building row-binlog blocks.
-    // This must be set by the row-binlog writer itself (typically during initialization),
-    // and MUST NOT depend on the source data writer's RowsetWriterContext pointer.
-    TabletSchemaSPtr source_tablet_schema = nullptr;
-    std::shared_ptr<PartialUpdateInfo> source_partial_update_info;
-    std::shared_ptr<MowContext> source_mow_context;
-    bool source_is_transient_rowset_writer = false;
-    DataWriteType source_write_type = DataWriteType::TYPE_DEFAULT;
-
-    void insert_seg_lsn(int64_t seg_id, std::shared_ptr<std::vector<int128_t>> lsn_ids) {
-        DCHECK(lsn_map != nullptr);
-        lsn_map->insert_seg_lsn(seg_id, std::move(lsn_ids));
-    }
-
-    void remove_seg(int64_t seg_id) {
-        DCHECK(lsn_map != nullptr);
-        lsn_map->remove_seg(seg_id);
-    }
-
-    std::shared_ptr<const std::vector<int128_t>> get_seg_lsn(int64_t seg_id) const {
-        DCHECK(lsn_map != nullptr);
-        return lsn_map->get_seg_lsn(seg_id);
-    }
-
-    // Shared LSN storage for row-binlog writers.
-    // Keep it as a pointer so SegmentWriteBinlogOptions stays copyable.
-    std::shared_ptr<SegmentWriteBinlogLsnMap> lsn_map =
-            std::make_shared<SegmentWriteBinlogLsnMap>();
-};
-
 using TabletSharedPtr = std::shared_ptr<Tablet>;
 
 class SegmentWriter {
@@ -257,6 +200,10 @@ private:
     bool _is_mow_with_cluster_key();
 
 protected:
+    // Build key index for derived writers that override append_block.
+    Status build_key_index(std::vector<IOlapColumnDataAccessor*>& key_columns,
+                           IOlapColumnDataAccessor* seq_column, size_t num_rows);
+
     uint32_t _segment_id;
     TabletSchemaSPtr _tablet_schema;
     BaseTabletSPtr _tablet;

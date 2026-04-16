@@ -36,6 +36,7 @@
 #include "common/status.h"
 #include "core/assert_cast.h"
 #include "core/data_type/data_type_factory.hpp"
+#include "exec/sink/autoinc_buffer.h" // GlobalAutoIncBuffers
 #include "load/memtable/memtable.h"
 #include "service/point_query_executor.h"
 #include "storage/compaction/cumulative_compaction_time_series_policy.h"
@@ -1551,11 +1552,11 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         auto& binlog_ctx =
                 const_cast<RowsetWriterContext&>(transient_row_binlog_writer->context());
         auto& cfg = binlog_ctx.write_binlog_opt().write_binlog_config();
-        cfg.source_tablet_schema = data_ctx.tablet_schema;
-        cfg.source_partial_update_info = data_ctx.partial_update_info;
-        cfg.source_mow_context = data_ctx.mow_context;
-        cfg.source_is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
-        cfg.source_write_type = data_ctx.write_type;
+        cfg.source.tablet_schema = data_ctx.tablet_schema;
+        cfg.source.partial_update_info = data_ctx.partial_update_info;
+        cfg.source.mow_context = data_ctx.mow_context;
+        cfg.source.is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
+        cfg.source.source_write_type = data_ctx.write_type;
 
         // Keep binlog writer context self-sufficient for historical row retrieval.
         binlog_ctx.mow_context = data_ctx.mow_context;
@@ -1565,11 +1566,14 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         const TabletSchemaSPtr& row_binlog_schema = row_binlog_rowset->tablet_schema();
         int64_t db_id = row_binlog_schema->db_id();
         int64_t table_id = row_binlog_schema->table_id();
+
+        auto lsn_buffer = GlobalAutoIncBuffers::GetInstance()->get_auto_inc_buffer(
+                db_id, table_id, kBinlogLsnAutoIncId);
+
         int32_t transient_segment_start_id = cast_set<int32_t>(row_binlog_rowset->num_segments());
         for (int32_t seg_idx = 0; seg_idx < cast_set<int32_t>(segments.size()); ++seg_idx) {
             std::shared_ptr<std::vector<int128_t>> lsn_ids;
-            RETURN_IF_ERROR(allocate_row_binlog_lsn_ids(db_id, table_id, row_binlog_schema,
-                                                       segments[seg_idx]->num_rows(), &lsn_ids));
+            RETURN_IF_ERROR(allocate_binlog_lsn(lsn_buffer, segments[seg_idx]->num_rows(), &lsn_ids));
             binlog_ctx.write_binlog_opt().write_binlog_config().insert_seg_lsn(
                     transient_segment_start_id + seg_idx, std::move(lsn_ids));
         }
@@ -1631,10 +1635,8 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         if (build_row_binlog) {
             auto* group_rowset_writer = typeid_cast<GroupRowsetWriter*>(transient_rs_writer.get());
             DCHECK(group_rowset_writer != nullptr);
-            std::vector<RowsetSharedPtr> waited_build_rowsets(2);
+            auto waited_build_rowsets = std::vector<RowsetSharedPtr>({transient_rowset, transient_row_binlog});
             RETURN_IF_ERROR(group_rowset_writer->build_rowsets(waited_build_rowsets));
-            transient_rowset = waited_build_rowsets[0];
-            transient_row_binlog = waited_build_rowsets[1];
         } else {
             RETURN_IF_ERROR(transient_rs_writer->build(transient_rowset));
         }
@@ -1663,29 +1665,6 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         txn_info->delete_bitmap = delete_bitmap;
         // erase segment cache cause we will add a segment to rowset
         SegmentLoader::instance()->erase_segments(rowset->rowset_id(), rowset->num_segments());
-    }
-
-    // `binlog_delvec` records delete bitmap deltas that should be persisted separately for binlog.
-    // It is optional and only populated when the writer path enables it.
-    if (txn_info->binlog_delvec != nullptr) {
-        if (!build_row_binlog) {
-            // `delete_bitmap` is the final delta computed for this txn publish.
-            *(txn_info->binlog_delvec) = DeleteBitmap(*delete_bitmap);
-        } else {
-            DCHECK(row_binlog_rowset != nullptr);
-            txn_info->binlog_delvec->delete_bitmap.clear();
-            const RowsetId& cur_build_rid = txn_info->rowset->rowset_id();
-            const RowsetId& binlog_rid = row_binlog_rowset->rowset_id();
-            for (const auto& [key, bitmap] : delete_bitmap->delete_bitmap) {
-                const RowsetId& rid = std::get<0>(key);
-                const DeleteBitmap::SegmentId& sid = std::get<1>(key);
-                if (rid != cur_build_rid) {
-                    continue;
-                }
-                txn_info->binlog_delvec->merge({binlog_rid, sid, cast_set<uint64_t>(cur_version)},
-                                               bitmap);
-            }
-        }
     }
 
     size_t total_rows = std::accumulate(

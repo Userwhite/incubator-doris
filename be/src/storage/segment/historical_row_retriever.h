@@ -29,6 +29,7 @@ namespace segment_v2 {
 struct HistoricalRowRetrieverContext {
     BaseTabletSPtr tablet;
     TabletSchemaSPtr tablet_schema;
+    RowsetWriterContext* rowset_writer_ctx = nullptr;
     std::shared_ptr<PartialUpdateInfo> partial_update_info;
     bool is_transient_rowset_writer = false;
     DataWriteType write_type = DataWriteType::TYPE_DEFAULT;
@@ -113,12 +114,6 @@ private:
     void _encode_seq_column(const IOlapColumnDataAccessor* seq_column, size_t pos,
                             std::string* encoded_keys);
     
-    Status _fill_missing_columns(MutableColumns& mutable_full_columns,
-                                           const std::vector<bool>& use_default_or_null_flag,
-                                           bool has_default_or_nullable,
-                                           const size_t& segment_start_pos,
-                                           const Block* block);
-
     // get key_columns, seq column, delete data from source block, prepare for searching historial data
     std::vector<IOlapColumnDataAccessor*> _key_columns;
     const IOlapColumnDataAccessor* _seq_column = nullptr;

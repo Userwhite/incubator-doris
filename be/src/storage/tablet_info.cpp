@@ -416,13 +416,6 @@ Status OlapTableSchemaParam::init(const TOlapTableSchemaParam& tschema) {
             tc->init_from_thrift(tcolumn_desc);
             index->columns.emplace_back(tc);
         }
-        if (t_index.__isset.indexes_desc) {
-            for (const auto& tindex_desc : t_index.indexes_desc) {
-                TabletIndex* ti = _obj_pool.add(new TabletIndex());
-                ti->init_from_thrift(tindex_desc, {});
-                index->indexes.emplace_back(ti);
-            }
-        }
         _row_binlog_index_schema = index;
     }
 

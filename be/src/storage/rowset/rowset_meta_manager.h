@@ -62,6 +62,15 @@ public:
                        std::optional<BinlogFormatPB> binlog_format = std::nullopt,
                        const std::map<RowsetId, RowsetMetaPB>* attach_rowset_map = nullptr);
 
+    // STATEMENT_AND_SNAPSHOT
+    static Status save(OlapMeta* meta, TabletUid tablet_uid, const RowsetId& rowset_id,
+                       const RowsetMetaPB& rowset_meta_pb, bool enable_binlog) {
+        return save(meta, tablet_uid, rowset_id, rowset_meta_pb,
+                    enable_binlog ? std::optional<BinlogFormatPB>(
+                                            BinlogFormatPB::STATEMENT_AND_SNAPSHOT)
+                                  : std::nullopt);
+    }
+
     static std::vector<std::string> get_binlog_filenames(OlapMeta* meta, TabletUid tablet_uid,
                                                          std::string_view binlog_version,
                                                          int64_t segment_idx);

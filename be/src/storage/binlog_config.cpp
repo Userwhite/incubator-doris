@@ -22,8 +22,34 @@
 #include <gen_cpp/olap_file.pb.h>
 
 #include "common/logging.h"
+#include "exec/sink/autoinc_buffer.h" // AutoIncIDBuffer
+#include "storage/binlog.h"           // allocate_binlog_lsn
 
 namespace doris {
+
+Status allocate_binlog_lsn(const std::shared_ptr<AutoIncIDBuffer>& lsn_buffer, size_t num_rows,
+                           std::shared_ptr<std::vector<int128_t>>* lsn_ids) {
+    if (lsn_buffer == nullptr) {
+        return Status::InternalError("binlog<row> try to get lsn buffer, but null");
+    }
+    DCHECK(lsn_ids != nullptr);
+    DCHECK(num_rows > 0);
+
+    std::vector<std::pair<int64_t, size_t>> ranges;
+    RETURN_IF_ERROR(lsn_buffer->sync_request_ids(num_rows, &ranges));
+
+    auto ids = std::make_shared<std::vector<int128_t>>();
+    ids->reserve(num_rows);
+    for (const auto& [start, length] : ranges) {
+        for (size_t i = 0; i < length; ++i) {
+            ids->push_back(static_cast<int128_t>(start + static_cast<int64_t>(i)));
+        }
+    }
+    DCHECK_EQ(ids->size(), num_rows);
+    *lsn_ids = std::move(ids);
+    return Status::OK();
+}
+
 BinlogConfig& BinlogConfig::operator=(const TBinlogConfig& config) {
     if (config.__isset.enable) {
         _enable = config.enable;

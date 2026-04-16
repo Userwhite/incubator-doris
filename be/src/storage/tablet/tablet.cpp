@@ -512,11 +512,7 @@ Status Tablet::add_rowset(RowsetSharedPtr rowset, RowsetSharedPtr row_binlog_row
     _timestamped_version_tracker.add_version(rowset->version());
     add_compaction_score(rowset->rowset_meta()->get_compaction_score());
 
-    if (row_binlog_rowset != nullptr) {
-        RETURN_IF_ERROR(_tablet_meta->add_row_binlog_rs_meta(row_binlog_rowset->rowset_meta()));
-        _row_binlog_rs_version_map[rowset->version()] = row_binlog_rowset;
-        _row_binlog_version_tracker.add_version(row_binlog_rowset->version());
-    }
+    RETURN_IF_ERROR(_add_row_binlog_rowset_unlocked(rowset, row_binlog_rowset));
 
     std::vector<RowsetSharedPtr> rowsets_to_delete;
     // yiguolei: temp code, should remove the rowset contains by this rowset
@@ -533,6 +529,31 @@ Status Tablet::add_rowset(RowsetSharedPtr rowset, RowsetSharedPtr row_binlog_row
     std::vector<RowsetSharedPtr> empty_vec;
     RETURN_IF_ERROR(modify_rowsets(empty_vec, rowsets_to_delete));
     ++_newly_created_rowset_num;
+    return Status::OK();
+}
+
+Status Tablet::_add_row_binlog_rowset_unlocked(const RowsetSharedPtr& rowset,
+                                               const RowsetSharedPtr& row_binlog_rowset) {
+    if (row_binlog_rowset == nullptr) {
+        return Status::OK();
+    }
+    DCHECK(rowset != nullptr);
+    DCHECK_EQ(row_binlog_rowset->version(), rowset->version());
+
+    const auto& version = row_binlog_rowset->version();
+    if (auto it = _row_binlog_rs_version_map.find(version); it != _row_binlog_rs_version_map.end()) {
+        if (it->second != nullptr && it->second->rowset_id() == row_binlog_rowset->rowset_id()) {
+            return Status::OK();
+        }
+        return Status::Error<PUSH_VERSION_ALREADY_EXIST>(
+                "binlog<row> version already exists. existing rowset_id={}, version={}, tablet={}",
+                it->second != nullptr ? it->second->rowset_id().to_string() : "0",
+                version.to_string(), tablet_id());
+    }
+
+    RETURN_IF_ERROR(_tablet_meta->add_row_binlog_rs_meta(row_binlog_rowset->rowset_meta()));
+    _row_binlog_rs_version_map[version] = row_binlog_rowset;
+    _row_binlog_version_tracker.add_version(version);
     return Status::OK();
 }
 
@@ -710,51 +731,8 @@ RowsetSharedPtr Tablet::_rowset_with_largest_size() {
     return largest_rowset;
 }
 
-// add inc rowset should not persist tablet meta, because it will be persisted when publish txn.
-Status Tablet::add_inc_rowset(const RowsetSharedPtr& rowset) {
-    DCHECK(rowset != nullptr);
-    std::lock_guard<std::shared_mutex> wrlock(_meta_lock);
-    SCOPED_SIMPLE_TRACE_IF_TIMEOUT(TRACE_TABLET_LOCK_THRESHOLD);
-    if (_contains_rowset(rowset->rowset_id())) {
-        return Status::OK();
-    }
-    RETURN_IF_ERROR(_contains_version(rowset->version()));
-
-    RETURN_IF_ERROR(_tablet_meta->add_rs_meta(rowset->rowset_meta()));
-    _rs_version_map[rowset->version()] = rowset;
-
-    _timestamped_version_tracker.add_version(rowset->version());
-
-    ++_newly_created_rowset_num;
-
-    add_compaction_score(rowset->rowset_meta()->get_compaction_score());
-
-    return Status::OK();
-}
-
-Status Tablet::add_row_binlog_rowset(RowsetSharedPtr row_binlog_rowset) {
-    DCHECK(row_binlog_rowset != nullptr);
-    std::lock_guard<std::shared_mutex> wrlock(_meta_lock);
-    SCOPED_SIMPLE_TRACE_IF_TIMEOUT(TRACE_TABLET_LOCK_THRESHOLD);
-
-    const auto& version = row_binlog_rowset->version();
-    if (auto it = _row_binlog_rs_version_map.find(version); it != _row_binlog_rs_version_map.end()) {
-        if (it->second != nullptr && it->second->rowset_id() == row_binlog_rowset->rowset_id()) {
-            return Status::OK();
-        }
-        return Status::Error<PUSH_VERSION_ALREADY_EXIST>(
-                "binlog<row> version already exists. existing rowset_id={}, version={}, tablet={}",
-                it->second != nullptr ? it->second->rowset_id().to_string() : "0",
-                version.to_string(), tablet_id());
-    }
-
-    RETURN_IF_ERROR(_tablet_meta->add_row_binlog_rs_meta(row_binlog_rowset->rowset_meta()));
-    _row_binlog_rs_version_map[version] = std::move(row_binlog_rowset);
-    _row_binlog_version_tracker.add_version(version);
-    return Status::OK();
-}
-
-Status Tablet::add_inc_rowset(const RowsetSharedPtr& rowset, RowsetSharedPtr row_binlog_rowset) {
+Status Tablet::add_inc_rowset(const RowsetSharedPtr& rowset,
+                              const RowsetSharedPtr& row_binlog_rowset) {
     DCHECK(rowset != nullptr);
     std::lock_guard<std::shared_mutex> wrlock(_meta_lock);
     SCOPED_SIMPLE_TRACE_IF_TIMEOUT(TRACE_TABLET_LOCK_THRESHOLD);
@@ -770,27 +748,7 @@ Status Tablet::add_inc_rowset(const RowsetSharedPtr& rowset, RowsetSharedPtr row
     ++_newly_created_rowset_num;
     add_compaction_score(rowset->rowset_meta()->get_compaction_score());
 
-    if (row_binlog_rowset != nullptr) {
-        DCHECK_EQ(row_binlog_rowset->version(), rowset->version());
-        const auto& version = row_binlog_rowset->version();
-        if (auto it = _row_binlog_rs_version_map.find(version);
-            it != _row_binlog_rs_version_map.end()) {
-            if (it->second != nullptr &&
-                it->second->rowset_id() == row_binlog_rowset->rowset_id()) {
-                return Status::OK();
-            }
-            return Status::Error<PUSH_VERSION_ALREADY_EXIST>(
-                    "binlog<row> version already exists. existing rowset_id={}, version={}, tablet={}",
-                    it->second != nullptr ? it->second->rowset_id().to_string() : "0",
-                    version.to_string(), tablet_id());
-        }
-
-        RETURN_IF_ERROR(_tablet_meta->add_row_binlog_rs_meta(row_binlog_rowset->rowset_meta()));
-        _row_binlog_rs_version_map[version] = std::move(row_binlog_rowset);
-        _row_binlog_version_tracker.add_version(version);
-    }
-
-    return Status::OK();
+    return _add_row_binlog_rowset_unlocked(rowset, row_binlog_rowset);
 }
 
 void Tablet::_delete_stale_rowset_by_version(const Version& version) {
@@ -2729,6 +2687,22 @@ Status Tablet::save_delete_bitmap(const TabletTxnInfo* txn_info, int64_t txn_id,
     RowsetSharedPtr rowset = txn_info->rowset;
     int64_t cur_version = rowset->start_version();
 
+    // For partial update / seq replace publish with binlog<Row> enabled, we need to merge delete
+    // bitmap deltas of current rowset into `binlog_delvec` and persist it to tablet meta.
+    const bool build_row_binlog = txn_info->partial_update_info &&
+                                  txn_info->partial_update_info->is_partial_update() &&
+                                  !txn_info->attach_rowsets.empty();
+    const RowsetId cur_build_rid = txn_info->rowset->rowset_id();
+    const RowsetId binlog_rid = build_row_binlog ? txn_info->attach_rowsets[0]->rowset_id()
+                                                 : cur_build_rid;
+    auto* binlog_delvec = txn_info->binlog_delvec.get();
+    if (build_row_binlog) {
+        DCHECK(txn_info->attach_rowsets[0] != nullptr);
+        DCHECK(txn_info->attach_rowsets[0]->rowset_meta() != nullptr);
+        DCHECK(txn_info->attach_rowsets[0]->rowset_meta()->is_row_binlog());
+        DCHECK(binlog_delvec != nullptr);
+    }
+
     // update version without write lock, compaction and publish_txn
     // will update delete bitmap, handle compaction with _rowset_update_lock
     // and publish_txn runs sequential so no need to lock here
@@ -2737,15 +2711,14 @@ Status Tablet::save_delete_bitmap(const TabletTxnInfo* txn_info, int64_t txn_id,
         if (std::get<1>(key) != DeleteBitmap::INVALID_SEGMENT_ID) {
             _tablet_meta->delete_bitmap().merge({std::get<0>(key), std::get<1>(key), cur_version},
                                                 bitmap);
-        }
-    }
 
-    // Binlog delvecs (optional) are persisted/loaded separately from normal delete bitmap.
-    if (txn_info->binlog_delvec != nullptr) {
-        for (auto& [key, bitmap] : txn_info->binlog_delvec->delete_bitmap) {
-            if (std::get<1>(key) != DeleteBitmap::INVALID_SEGMENT_ID) {
+            if (build_row_binlog && std::get<0>(key) == cur_build_rid) {
+                const DeleteBitmap::SegmentId& sid = std::get<1>(key);
+                // Merge current delete bitmap deltas to binlog delvec because publish-phase
+                // partial-update and seq replace will influence the binlog file.
+                binlog_delvec->merge({binlog_rid, sid, cast_set<uint64_t>(cur_version)}, bitmap);
                 _tablet_meta->binlog_delvec().merge(
-                        {std::get<0>(key), std::get<1>(key), cur_version}, bitmap);
+                        {binlog_rid, sid, cast_set<uint64_t>(cur_version)}, bitmap);
             }
         }
     }

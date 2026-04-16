@@ -19,16 +19,86 @@
 
 #include <fmt/format.h>
 
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "common/logging.h" // DCHECK
 #include "common/status.h"
+#include "storage/olap_define.h" // DataWriteType
 #include "storage/olap_common.h"
+#include "storage/tablet/tablet_schema.h" // TabletSchemaSPtr
 
 namespace doris {
+
+class AutoIncIDBuffer;
+struct PartialUpdateInfo;
+struct MowContext;
+
+namespace segment_v2 {
+
+class SegmentWriteBinlogLsnMap {
+public:
+    void insert_seg_lsn(int64_t seg_id, std::shared_ptr<std::vector<int128_t>> lsn_ids) {
+        std::lock_guard<std::mutex> l(_mutex);
+        _seg_id_to_lsn_ids.emplace(seg_id, std::move(lsn_ids));
+    }
+
+    void remove_seg(int64_t seg_id) {
+        std::lock_guard<std::mutex> l(_mutex);
+        _seg_id_to_lsn_ids.erase(seg_id);
+    }
+
+    std::shared_ptr<const std::vector<int128_t>> get_seg_lsn(int64_t seg_id) const {
+        std::lock_guard<std::mutex> l(_mutex);
+        DCHECK(_seg_id_to_lsn_ids.contains(seg_id));
+        return _seg_id_to_lsn_ids.at(seg_id);
+    }
+
+private:
+    mutable std::mutex _mutex;
+    std::map<int64_t, std::shared_ptr<std::vector<int128_t>>> _seg_id_to_lsn_ids;
+};
+
+struct SegmentWriteBinlogOptions {
+public:
+    bool write_before = false;
+
+    // source context, used for retrieving historical row and building binlog<row> block
+    struct SourceWriteDataOptions {
+        TabletSchemaSPtr tablet_schema = nullptr;
+        std::shared_ptr<PartialUpdateInfo> partial_update_info;
+        std::shared_ptr<MowContext> mow_context;
+        bool is_transient_rowset_writer = false;
+        DataWriteType source_write_type = DataWriteType::TYPE_DEFAULT;
+    } source;
+
+    void insert_seg_lsn(int64_t seg_id, std::shared_ptr<std::vector<int128_t>> lsn_ids) {
+        DCHECK(lsn_map != nullptr);
+        lsn_map->insert_seg_lsn(seg_id, std::move(lsn_ids));
+    }
+
+    void remove_seg(int64_t seg_id) {
+        DCHECK(lsn_map != nullptr);
+        lsn_map->remove_seg(seg_id);
+    }
+
+    std::shared_ptr<const std::vector<int128_t>> get_seg_lsn(int64_t seg_id) const {
+        DCHECK(lsn_map != nullptr);
+        return lsn_map->get_seg_lsn(seg_id);
+    }
+
+    // Shared LSN storage for row-binlog writers.
+    // Keep it as a pointer so SegmentWriteBinlogOptions stays copyable.
+    std::shared_ptr<SegmentWriteBinlogLsnMap> lsn_map =
+            std::make_shared<SegmentWriteBinlogLsnMap>();
+};
+
+} // namespace segment_v2
 
 // Row binlog op type.
 // NOTE: The value is persisted into row binlog data, so keep it stable.
@@ -128,5 +198,10 @@ inline auto make_row_binlog_meta_key(const TabletUid& tablet_uid, const RowsetId
                                      const RowsetId& row_binlog_rowset_id) {
     return make_row_binlog_key(tablet_uid, base_rowset_id, row_binlog_rowset_id);
 }
+
+// Allocate per-row LSNs for row-binlog data.
+// The caller must provide a valid auto-inc buffer (typically from GlobalAutoIncBuffers).
+Status allocate_binlog_lsn(const std::shared_ptr<AutoIncIDBuffer>& lsn_buffer, size_t num_rows,
+                           std::shared_ptr<std::vector<int128_t>>* lsn_ids);
 
 } // namespace doris

@@ -86,8 +86,8 @@ namespace doris::segment_v2 {
 using namespace ErrorCode;
 using namespace KeyConsts;
 
-static const char* k_segment_magic = "D0R1";
-static const uint32_t k_segment_magic_length = 4;
+static constexpr const char* k_segment_magic = "D0R1";
+static constexpr uint32_t k_segment_magic_length = 4;
 
 inline std::string vertical_segment_writer_mem_tracker_name(uint32_t segment_id) {
     return "VerticalSegmentWriter:Segment-" + std::to_string(segment_id);

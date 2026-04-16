@@ -34,6 +34,7 @@
 #include "runtime/exec_env.h"
 #include "storage/data_dir.h"
 #include "storage/rowset_builder.h"
+#include "storage/segment/segment_writer.h"
 #include "storage/storage_engine.h"
 #include "storage/tablet/tablet.h"
 #include "storage/tablet/tablet_manager.h"
@@ -78,7 +79,7 @@ static void tear_down() {
 }
 
 static void create_tablet_request(int64_t tablet_id, int32_t schema_hash,
-                                  TCreateTabletReq* request) {
+                                  TCreateTabletReq* request, bool with_row_binlog = false) {
     request->tablet_id = tablet_id;
     request->__set_version(1);
     request->partition_id = 10001;
@@ -100,17 +101,51 @@ static void create_tablet_request(int64_t tablet_id, int32_t schema_hash,
     v1.column_type.type = TPrimitiveType::INT;
     v1.__set_aggregation_type(TAggregationType::SUM);
     request->tablet_schema.columns.push_back(v1);
-}
 
-static void create_tablet_request_with_row_binlog(int64_t tablet_id, int32_t schema_hash,
-                                                  TCreateTabletReq* request) {
-    create_tablet_request(tablet_id, schema_hash, request);
+    if (!with_row_binlog) {
+        return;
+    }
+
+    // Enable ROW binlog and build a minimal row-binlog tablet schema that contains required binlog columns.
+    // FE will append these columns when generating row-binlog schema.
     TBinlogConfig binlog_config;
     binlog_config.__set_enable(true);
     binlog_config.__set_binlog_format(TBinlogFormat::ROW);
     request->__set_binlog_config(binlog_config);
+
     TTabletSchema row_binlog_schema = request->tablet_schema;
     row_binlog_schema.schema_hash = schema_hash + 1;
+    row_binlog_schema.keys_type = TKeysType::DUP_KEYS;
+
+    // Remove aggregation from value columns for row binlog schema.
+    for (auto& col : row_binlog_schema.columns) {
+        if (!col.is_key) {
+            col.__set_aggregation_type(TAggregationType::NONE);
+        }
+    }
+
+    // Append binlog meta columns: LSN / OP / TIMESTAMP.
+    TColumn lsn_col;
+    lsn_col.column_name = BINLOG_LSN_COL;
+    lsn_col.__set_is_key(false);
+    lsn_col.column_type.type = TPrimitiveType::LARGEINT;
+    lsn_col.__set_aggregation_type(TAggregationType::NONE);
+    row_binlog_schema.columns.push_back(lsn_col);
+
+    TColumn op_col;
+    op_col.column_name = "__DORIS_BINLOG_OP__";
+    op_col.__set_is_key(false);
+    op_col.column_type.type = TPrimitiveType::BIGINT;
+    op_col.__set_aggregation_type(TAggregationType::NONE);
+    row_binlog_schema.columns.push_back(op_col);
+
+    TColumn ts_col;
+    ts_col.column_name = "__DORIS_BINLOG_TIMESTAMP__";
+    ts_col.__set_is_key(false);
+    ts_col.column_type.type = TPrimitiveType::BIGINT;
+    ts_col.__set_aggregation_type(TAggregationType::NONE);
+    row_binlog_schema.columns.push_back(ts_col);
+
     request->__set_row_binlog_schema(row_binlog_schema);
 }
 
@@ -181,7 +216,7 @@ public:
 TEST_F(GroupRowsetBuilderTest, buildWithRowBinlogMeta) {
     std::unique_ptr<RuntimeProfile> profile = std::make_unique<RuntimeProfile>("CreateTablet");
     TCreateTabletReq request;
-    create_tablet_request_with_row_binlog(10010, 270068390, &request);
+    create_tablet_request(10010, 270068390, &request, true);
     Status res = engine_ref->create_tablet(request, profile.get());
     ASSERT_TRUE(res.ok());
 
@@ -230,6 +265,9 @@ TEST_F(GroupRowsetBuilderTest, buildWithRowBinlogMeta) {
     ASSERT_EQ(request.tablet_schema.schema_hash, data_meta->tablet_schema_hash());
     ASSERT_EQ(row_binlog_index_id, row_binlog_meta->index_id());
     ASSERT_EQ(index_id, data_meta->index_id());
+
+    // Row-binlog schema must contain LSN column so that RowBinlogSegmentWriter can locate it.
+    ASSERT_GE(row_binlog_meta->tablet_schema()->field_index(BINLOG_LSN_COL), 0);
 
     res = engine_ref->tablet_manager()->drop_tablet(request.tablet_id, request.replica_id, false);
     ASSERT_TRUE(res.ok());

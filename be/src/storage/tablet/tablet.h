@@ -183,13 +183,9 @@ public:
                           std::vector<RowsetSharedPtr>& to_delete, bool check_delete = false);
     bool rowset_exists_unlocked(const RowsetSharedPtr& rowset);
 
-    Status add_inc_rowset(const RowsetSharedPtr& rowset);
-
-    // Add row binlog rowset (version-aligned with data rowset). It will not persist meta.
-    Status add_row_binlog_rowset(RowsetSharedPtr row_binlog_rowset);
-
-    // Add a committed data rowset and its row binlog rowset (if any). It will not persist meta.
-    Status add_inc_rowset(const RowsetSharedPtr& rowset, RowsetSharedPtr row_binlog_rowset);
+    // Add a committed data rowset and its row binlog rowset
+    Status add_inc_rowset(const RowsetSharedPtr& rowset,
+                          const RowsetSharedPtr& row_binlog_rowset = nullptr);
     /// Delete stale rowset by timing. This delete policy uses now() minutes
     /// config::tablet_rowset_expired_stale_sweep_time_sec to compute the deadline of expired rowset
     /// to delete.  When rowset is deleted, it will be added to StorageEngine unused map and record
@@ -541,6 +537,8 @@ private:
     Status _init_once_action();
     bool _contains_rowset(const RowsetId rowset_id);
     Status _contains_version(const Version& version);
+    Status _add_row_binlog_rowset_unlocked(const RowsetSharedPtr& rowset,
+                                           const RowsetSharedPtr& row_binlog_rowset);
 
     // Returns:
     // version: the max continuous version from beginning

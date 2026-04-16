@@ -42,6 +42,7 @@
 #include "storage/schema.h"
 #include "storage/storage_engine.h"
 #include "storage/tablet/tablet.h"
+#include "storage/tablet/tablet_manager.h"
 #include "storage/tablet/tablet_meta_manager.h"
 #include "storage/utils.h"
 
@@ -193,7 +194,7 @@ protected:
                             .ok());
     }
 
-    StorageEngine* storage_engine() { return ExecEnv::GetInstance()->storage_engine(); }
+    StorageEngine* storage_engine() { return &ExecEnv::GetInstance()->storage_engine().to_local(); }
 
     void prepare_group_flush_test_context(int64_t tablet_id, int32_t schema_hash,
                                           GroupFlushTestContext* ctx) {

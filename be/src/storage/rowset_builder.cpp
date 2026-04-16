@@ -213,7 +213,10 @@ Status RowsetBuilder::init() {
 
     RETURN_IF_ERROR(_init_context_common_fields(context));
 
-    if (tablet()->enable_row_binlog()) {
+    // For group write, the DATA writer needs to mark itself as primary so that
+    // SegmentFlusher can create RowBinlogSegmentWriter and the flush path can
+    // pre-allocate LSNs for row-binlog.
+    if (_req.write_req_type == WriteRequestType::DATA_IN_GROUP) {
         context.write_binlog_opt().mark_primary_writer();
     }
 
@@ -519,17 +522,15 @@ Status GroupRowsetBuilder::init() {
     group_writer->set_data_writer(_txn_rs_builder->rowset_writer());
     group_writer->set_row_binlog_writer(_row_binlog_rowset_builder->rowset_writer());
 
-    // Decouple row-binlog writer from the source data writer context: fill source info
-    // from its own configuration at init time.
     {
         const auto& data_ctx = _txn_rs_builder->rowset_writer()->context();
         auto& binlog_ctx = const_cast<RowsetWriterContext&>(_row_binlog_rowset_builder->rowset_writer()->context());
         auto& cfg = binlog_ctx.write_binlog_opt().write_binlog_config();
-        cfg.source_tablet_schema = data_ctx.tablet_schema;
-        cfg.source_partial_update_info = data_ctx.partial_update_info;
-        cfg.source_mow_context = data_ctx.mow_context;
-        cfg.source_is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
-        cfg.source_write_type = data_ctx.write_type;
+        cfg.source.tablet_schema = data_ctx.tablet_schema;
+        cfg.source.partial_update_info = data_ctx.partial_update_info;
+        cfg.source.mow_context = data_ctx.mow_context;
+        cfg.source.is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
+        cfg.source.source_write_type = data_ctx.write_type;
 
         // Keep binlog writer context self-sufficient for historical row retrieval.
         binlog_ctx.mow_context = data_ctx.mow_context;

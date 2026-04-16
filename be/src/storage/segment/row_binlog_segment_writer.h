@@ -18,6 +18,7 @@
 
 #include "storage/segment/segment_writer.h"
 #include "storage/segment/historical_row_retriever.h"
+#include "storage/binlog.h"
 namespace doris {
 
 namespace segment_v2 {

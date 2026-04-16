@@ -37,7 +37,7 @@
 #include "storage/storage_policy.h"
 #include "storage/tablet/tablet.h"
 #include "storage/tablet/tablet_schema.h"
-#include "storage/segment/segment_writer.h"
+#include "storage/binlog.h"
 
 namespace doris {
 

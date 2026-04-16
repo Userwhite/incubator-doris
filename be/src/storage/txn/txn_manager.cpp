@@ -463,7 +463,6 @@ Status TxnManager::commit_txn(OlapMeta* meta, TPartitionId partition_id,
             if (tablet != nullptr && tablet->enable_unique_key_merge_on_write()) {
                 load_info->unique_key_merge_on_write = true;
                 load_info->delete_bitmap.reset(new DeleteBitmap(tablet->tablet_id()));
-                load_info->binlog_delvec.reset(new DeleteBitmap(tablet->tablet_id()));
                 if (decoded_partial_update_info) {
                     LOG_INFO(
                             "get partial update info from RocksDB during recovery. txn_id={}, "
@@ -472,6 +471,15 @@ Status TxnManager::commit_txn(OlapMeta* meta, TPartitionId partition_id,
                             decoded_partial_update_info->summary());
                     load_info->partial_update_info = decoded_partial_update_info;
                 }
+            }
+        }
+
+        // For binlog<Row> txn (attached rowsets exist), binlog_delvec is only needed for publish
+        // phase to copy delete bitmap deltas.
+        if (attach_rowsets != nullptr && !attach_rowsets->empty()) {
+            TabletSharedPtr t = _engine.tablet_manager()->get_tablet(tablet_id, tablet_uid);
+            if (t != nullptr && t->enable_unique_key_merge_on_write()) {
+                load_info->binlog_delvec.reset(new DeleteBitmap(t->tablet_id()));
             }
         }
         load_info->commit();
@@ -562,7 +570,7 @@ Status TxnManager::publish_txn(OlapMeta* meta, TPartitionId partition_id,
             if (rs == nullptr || rs == rowset) {
                 continue;
             }
-            rs->make_visible(version);
+            rs->make_visible(version, commit_tso);
         }
     }
 
@@ -779,37 +787,29 @@ Status TxnManager::delete_txn(OlapMeta* meta, TPartitionId partition_id,
                         rowset->rowset_id().to_string(), rowset->version().to_string(),
                         RowsetStatePB_Name(rowset->rowset_meta_state()));
             } else {
+                // clean attach rowset first
+                for (const auto& attach_rowset : load_info->attach_rowsets) {
+                    Status status = RowsetMetaManager::remove_row_binlog(
+                            meta, tablet_uid, rowset->rowset_id(), attach_rowset->rowset_id());
+                    if (!status.ok())  {
+                        if (status.is<META_KEY_NOT_FOUND>()) {
+                            continue;
+                        } else {
+                            return status;
+                        }
+                    }
+                    _engine.add_unused_rowset(attach_rowset);
+                }
                 static_cast<void>(RowsetMetaManager::remove(meta, tablet_uid, rowset->rowset_id()));
 #ifndef BE_TEST
                 _engine.add_unused_rowset(rowset);
 #endif
-
-                // Clean attached rowsets.
-                std::unordered_set<std::string> cleaned;
-                cleaned.insert(rowset->rowset_id().to_string());
-                for (const auto& rs : load_info->attach_rowsets) {
-                    if (rs == nullptr) {
-                        continue;
-                    }
-                    auto rs_id = rs->rowset_id().to_string();
-                    if (cleaned.find(rs_id) != cleaned.end()) {
-                        continue;
-                    }
-                    cleaned.insert(rs_id);
-                    if (rs->rowset_meta()->is_row_binlog()) {
-                        static_cast<void>(RowsetMetaManager::remove_row_binlog(
-                                meta, tablet_uid, rowset->rowset_id(), rs->rowset_id()));
-                    } else {
-                        static_cast<void>(RowsetMetaManager::remove(meta, tablet_uid, rs->rowset_id()));
-                    }
-#ifndef BE_TEST
-                    _engine.add_unused_rowset(rs);
-#endif
-                }
                 VLOG_NOTICE << "delete transaction from engine successfully."
                             << " partition_id: " << key.first << ", transaction_id: " << key.second
                             << ", tablet: " << tablet_info.to_string() << ", rowset: "
-                            << (rowset != nullptr ? rowset->rowset_id().to_string() : "0");
+                            << (rowset != nullptr ? rowset->rowset_id().to_string() : "0")
+                            << ", binlog<row> rowset: " << (load_info->attach_rowsets.empty() ? 
+                                        "0" : load_info->attach_rowsets[0]->rowset_id().to_string());
             }
         }
         it->second.erase(load_itr);
@@ -864,36 +864,25 @@ void TxnManager::force_rollback_tablet_related_txns(OlapMeta* meta, TTabletId ta
                     LOG(INFO) << " delete transaction from engine "
                               << ", tablet: " << tablet_info.to_string()
                               << ", rowset id: " << rowset->rowset_id();
-                    static_cast<void>(
-                            RowsetMetaManager::remove(meta, tablet_uid, rowset->rowset_id()));
-
-                    std::unordered_set<std::string> cleaned;
-                    cleaned.insert(rowset->rowset_id().to_string());
-                    for (const auto& rs : load_info->attach_rowsets) {
-                        if (rs == nullptr) {
-                            continue;
+                    // clean attach rowset first
+                    for (const auto& attach_rowset : load_info->attach_rowsets) {
+                        Status status = RowsetMetaManager::remove_row_binlog(
+                                meta, tablet_uid, rowset->rowset_id(), attach_rowset->rowset_id());
+                        if (!status.ok())  {
+                            if (status.is<META_KEY_NOT_FOUND>()) {
+                                continue;
+                            }
                         }
-                        auto rs_id = rs->rowset_id().to_string();
-                        if (cleaned.find(rs_id) != cleaned.end()) {
-                            continue;
-                        }
-                        cleaned.insert(rs_id);
-                        if (rs->rowset_meta()->is_row_binlog()) {
-                            static_cast<void>(RowsetMetaManager::remove_row_binlog(
-                                    meta, tablet_uid, rowset->rowset_id(), rs->rowset_id()));
-                        } else {
-                            static_cast<void>(RowsetMetaManager::remove(meta, tablet_uid, rs->rowset_id()));
-                        }
-#ifndef BE_TEST
-                        _engine.add_unused_rowset(rs);
-#endif
                     }
+                    static_cast<void>(RowsetMetaManager::remove(meta, tablet_uid, rowset->rowset_id()));
                 }
                 LOG(INFO) << "remove tablet related txn."
                           << " partition_id: " << it->first.first
                           << ", transaction_id: " << it->first.second
                           << ", tablet: " << tablet_info.to_string() << ", rowset: "
-                          << (rowset != nullptr ? rowset->rowset_id().to_string() : "0");
+                          << (rowset != nullptr ? rowset->rowset_id().to_string() : "0")
+                          << ", binlog<row> rowset: " << (load_info->attach_rowsets.empty() ? 
+                                    "0" : load_info->attach_rowsets[0]->rowset_id().to_string());
                 it->second.erase(load_itr);
             }
             if (it->second.empty()) {
