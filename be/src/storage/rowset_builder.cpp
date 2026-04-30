@@ -88,7 +88,8 @@ void BaseRowsetBuilder::_init_profile(RuntimeProfile* profile) {
     _profile = profile->create_child(
             fmt::format(
                     "RowsetBuilder {} {}", _req.tablet_id,
-                    _req.write_req_type == WriteRequestType::ROW_BINLOG ? "row_binlog" : "data"),
+                    _req.write_req_type == WriteRequestType::BINLOG_IN_GROUP ? "binlog<row>"
+                                                                             : "data"),
             true, true);
     _build_rowset_timer = ADD_TIMER(_profile, "BuildRowsetTime");
     _submit_delete_bitmap_timer = ADD_TIMER(_profile, "DeleteBitmapSubmitTime");
@@ -119,10 +120,6 @@ RowsetBuilder::~RowsetBuilder() {
 
 Tablet* RowsetBuilder::tablet() {
     return static_cast<Tablet*>(_tablet.get());
-}
-
-TabletSharedPtr RowsetBuilder::tablet_sptr() {
-    return std::static_pointer_cast<Tablet>(_tablet);
 }
 
 void RowsetBuilder::_garbage_collection(bool cancel_txn) {
@@ -194,7 +191,8 @@ Status RowsetBuilder::check_tablet_version_count() {
         !GlobalMemoryArbitrator::is_exceed_soft_mem_limit(GB_EXCHANGE_BYTE)) {
         // Trigger compaction
         auto st = _engine.submit_compaction_task(
-                tablet_sptr(), CompactionType::CUMULATIVE_COMPACTION, true, true, 2);
+                std::static_pointer_cast<Tablet>(tablet_sptr()),
+                CompactionType::CUMULATIVE_COMPACTION, true, true, 2);
         if (!st.ok()) [[unlikely]] {
             LOG(WARNING) << "failed to trigger compaction, tablet_id=" << _tablet->tablet_id()
                          << " : " << st;
@@ -272,6 +270,8 @@ Status BaseRowsetBuilder::_init_context_common_fields(RowsetWriterContext& conte
 
     context.txn_id = _req.txn_id;
     context.load_id = _req.load_id;
+    context.db_id = _req.table_schema_param->db_id();
+    context.table_id = _req.table_schema_param->table_id();
     context.rowset_state = PREPARED;
     context.segments_overlap = OVERLAPPING;
     context.tablet_schema = _tablet_schema;
@@ -280,7 +280,7 @@ Status BaseRowsetBuilder::_init_context_common_fields(RowsetWriterContext& conte
     context.index_id = _req.index_id;
     context.tablet = _tablet;
     context.enable_segcompaction = !_req.table_schema_param->is_partial_update();
-    if (_req.write_req_type == WriteRequestType::ROW_BINLOG ||
+    if (_req.write_req_type == WriteRequestType::BINLOG_IN_GROUP ||
         _req.write_req_type == WriteRequestType::DATA_IN_GROUP) {
         context.enable_segcompaction = false;
     }
@@ -303,6 +303,8 @@ Status BaseRowsetBuilder::build_rowset() {
 
 Status GroupRowsetBuilder::build_rowset() {
     // build binlog rowset first, then data rowset
+    // If data rowset build fails after binlog has built some segments, we rely on the
+    // RowsetBuilder/StorageEngine garbage-collection paths to clean up built-but-uncommitted files.
     RETURN_IF_ERROR(_row_binlog_rowset_builder->build_rowset());
     return _txn_rs_builder->build_rowset();
 }
@@ -431,16 +433,17 @@ Status BaseRowsetBuilder::_build_current_tablet_schema(
         int64_t index_id, const OlapTableSchemaParam* table_schema_param,
         const TabletSchema& ori_tablet_schema) {
     const OlapTableIndexSchema* index_schema = nullptr;
-    for (const auto* schema : table_schema_param->indexes()) {
-        if (schema->index_id == index_id) {
-            index_schema = schema;
-            break;
-        }
-    }
-    if (index_schema == nullptr) {
+    if (_req.write_req_type == WriteRequestType::BINLOG_IN_GROUP) {
         const auto* row_binlog_index_schema = table_schema_param->row_binlog_index_schema();
-        if (row_binlog_index_schema != nullptr && row_binlog_index_schema->index_id == index_id) {
-            index_schema = row_binlog_index_schema;
+        DCHECK(row_binlog_index_schema != nullptr);
+        DCHECK_EQ(row_binlog_index_schema->index_id, index_id);
+        index_schema = row_binlog_index_schema;
+    } else {
+        for (const auto* schema : table_schema_param->indexes()) {
+            if (schema->index_id == index_id) {
+                index_schema = schema;
+                break;
+            }
         }
     }
 
@@ -477,16 +480,18 @@ Status BaseRowsetBuilder::_build_current_tablet_schema(
         _tablet_schema->set_auto_increment_column(table_schema_param->auto_increment_coulumn());
     }
     // set partial update columns info
-    _partial_update_info = std::make_shared<PartialUpdateInfo>();
-    RETURN_IF_ERROR(_partial_update_info->init(
-            tablet()->tablet_id(), _req.txn_id, *_tablet_schema,
-            table_schema_param->unique_key_update_mode(),
-            table_schema_param->partial_update_new_key_policy(),
-            table_schema_param->partial_update_input_columns(),
-            table_schema_param->is_strict_mode(), table_schema_param->timestamp_ms(),
-            table_schema_param->nano_seconds(), table_schema_param->timezone(),
-            table_schema_param->auto_increment_coulumn(),
-            table_schema_param->sequence_map_col_uid(), _max_version_in_flush_phase));
+    if (is_data_builder()) {
+        _partial_update_info = std::make_shared<PartialUpdateInfo>();
+        RETURN_IF_ERROR(_partial_update_info->init(
+                tablet()->tablet_id(), _req.txn_id, *_tablet_schema,
+                table_schema_param->unique_key_update_mode(),
+                table_schema_param->partial_update_new_key_policy(),
+                table_schema_param->partial_update_input_columns(),
+                table_schema_param->is_strict_mode(), table_schema_param->timestamp_ms(),
+                table_schema_param->nano_seconds(), table_schema_param->timezone(),
+                table_schema_param->auto_increment_coulumn(),
+                table_schema_param->sequence_map_col_uid(), _max_version_in_flush_phase));
+    }
     return Status::OK();
 }
 
@@ -532,9 +537,6 @@ Status GroupRowsetBuilder::init() {
         cfg.source.is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
         cfg.source.source_write_type = data_ctx.write_type;
 
-        // Keep binlog writer context self-sufficient for historical row retrieval.
-        binlog_ctx.mow_context = data_ctx.mow_context;
-        binlog_ctx.partial_update_info = data_ctx.partial_update_info;
     }
 
     _rowset_writer = std::move(group_writer);
@@ -554,7 +556,12 @@ Status GroupRowsetBuilder::commit_txn() {
     // Attach binlog rowset to txn rowset, so that commit/rollback and
     // clean-up are all handled by txn rowset builder.
     RETURN_IF_ERROR(_txn_rs_builder->attach_rowset_to_txn(_row_binlog_rowset_builder->rowset()));
-    return _txn_rs_builder->commit_txn();
+    auto st = _txn_rs_builder->commit_txn();
+    if (st.ok()) {
+        // Avoid RowBinlogRowsetBuilder being cleaned in its base dtor.
+        RETURN_IF_ERROR(_row_binlog_rowset_builder->commit_txn());
+    }
+    return st;
 }
 
 Status RowBinlogRowsetBuilder::init() {
@@ -567,6 +574,7 @@ Status RowBinlogRowsetBuilder::init() {
             _req.index_id, _req.table_schema_param.get(),
             *std::dynamic_pointer_cast<Tablet>(_tablet)->row_binlog_tablet_schema()));
     context.write_binlog_opt().mark_binlog_writer();
+    DCHECK(context.write_binlog_opt().is_binlog_writer());
 
     _rowset_writer = DORIS_TRY(_tablet->create_rowset_writer(context, false));
     // need to attach PendingRowsetGuard after txn_rs_builder init

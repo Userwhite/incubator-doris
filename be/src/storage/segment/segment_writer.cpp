@@ -63,6 +63,7 @@
 #include "storage/rowset/segment_creator.h"
 #include "storage/segment/column_writer.h" // ColumnWriter
 #include "storage/segment/external_col_meta_util.h"
+#include "storage/segment/historical_row_retriever.h"
 #include "storage/segment/page_io.h"
 #include "storage/segment/page_pointer.h"
 #include "storage/segment/segment_loader.h"
@@ -626,7 +627,8 @@ Status SegmentWriter::append_block_with_partial_content(const Block* block, size
 
     // read to fill full block
     RETURN_IF_ERROR(read_plan.fill_missing_columns(
-            _opts.rowset_ctx, _rsid_to_rowset, *_tablet_schema, full_block,
+            _opts.rowset_ctx->make_historical_row_retriever_context(), _rsid_to_rowset,
+            *_tablet_schema, full_block,
             use_default_or_null_flag, has_default_or_nullable,
             cast_set<uint32_t>(segment_start_pos), block));
 

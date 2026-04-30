@@ -46,6 +46,7 @@
 #include "storage/segment/segment.h"
 
 namespace doris {
+
 namespace segment_v2 {
 
 using namespace ErrorCode;
@@ -159,10 +160,10 @@ Status PrimaryKeyModelRowRetriever::build_after_block(Block* block,
     if (config::is_cloud_mode()) {
         return Status::NotSupported("fill_missing_columns");
     }
-    if (_context.rowset_writer_ctx == nullptr) {
-        return Status::InternalError("rowset writer context is null");
+    if (_context.partial_update_info == nullptr) {
+        return Status::InternalError("partial update info is null");
     }
-    return _rssid_to_rid.fill_missing_columns(_context.rowset_writer_ctx, _rsid_to_rowset,
+    return _rssid_to_rid.fill_missing_columns(_context, _rsid_to_rowset,
                                               *_context.tablet_schema, *block,
                                               _use_default_or_null_flag,
                                               _has_default_or_nullable,

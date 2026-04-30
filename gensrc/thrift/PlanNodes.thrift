@@ -89,6 +89,7 @@ struct TPaloScanRange {
   7: optional list<TKeyRange> partition_column_ranges
   8: optional string index_name
   9: optional string table_name
+  10: optional Types.TVersionRange spec_version
 }
 
 enum TFileFormatType {
@@ -913,6 +914,8 @@ struct TOlapScanNode {
   24: optional bool enable_mor_value_predicate_pushdown
   // Read MOR table as DUP table: skip merge, skip delete sign
   25: optional bool read_mor_as_dup
+  // Read row binlog index instead of base index
+  26: optional bool read_row_binlog
 }
 
 struct TEqJoinCondition {

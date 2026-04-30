@@ -32,7 +32,7 @@ class OlapTableSchemaParam;
 enum class WriteRequestType {
     DATA = 0, // data write without binlog<row>
     DATA_IN_GROUP = 1, // data write with binlog<row>
-    ROW_BINLOG = 2, // binlog write
+    BINLOG_IN_GROUP = 2, // binlog write with binlog<row>
     GROUP = 3, // group write for data and binlog<row>
 };
 

@@ -95,6 +95,8 @@ void build_rowset_meta_with_spec_field(RowsetMeta& rowset_meta,
     rowset_meta.set_rowset_state(spec_rowset_meta.rowset_state());
     rowset_meta.set_segments_key_bounds_truncated(
             spec_rowset_meta.is_segments_key_bounds_truncated());
+    rowset_meta.set_db_id(spec_rowset_meta.db_id());
+    rowset_meta.set_table_id(spec_rowset_meta.table_id());
     std::vector<KeyBoundsPB> segments_key_bounds;
     spec_rowset_meta.get_segments_key_bounds(&segments_key_bounds);
     rowset_meta.set_segments_key_bounds(segments_key_bounds);
@@ -304,6 +306,7 @@ BetaRowsetWriter::~BetaRowsetWriter() {
 
 Status BaseBetaRowsetWriter::init(const RowsetWriterContext& rowset_writer_context) {
     _context = rowset_writer_context;
+    DCHECK(_context.tablet_schema != nullptr);
     _rowset_meta.reset(new RowsetMeta);
     if (_context.storage_resource) {
         _rowset_meta->set_remote_storage_resource(*_context.storage_resource);
@@ -311,6 +314,8 @@ Status BaseBetaRowsetWriter::init(const RowsetWriterContext& rowset_writer_conte
     _rowset_meta->set_rowset_id(_context.rowset_id);
     _rowset_meta->set_partition_id(_context.partition_id);
     _rowset_meta->set_tablet_id(_context.tablet_id);
+    _rowset_meta->set_db_id(_context.db_id);
+    _rowset_meta->set_table_id(_context.table_id);
     _rowset_meta->set_index_id(_context.index_id);
     _rowset_meta->set_tablet_schema_hash(_context.tablet_schema_hash);
     _rowset_meta->set_rowset_type(_context.rowset_type);

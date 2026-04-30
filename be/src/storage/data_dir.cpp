@@ -646,19 +646,22 @@ Status DataDir::load() {
                 LOG(INFO) << "successfully to add committed rowset: " << rowset_meta->rowset_id()
                           << " to tablet: " << rowset_meta->tablet_id()
                           << " schema hash: " << rowset_meta->tablet_schema_hash()
-                          << " for txn: " << rowset_meta->txn_id();
+                          << " for txn: " << rowset_meta->txn_id()
+                          << ", binlog<row> rowset: " << (attach_rowsets.empty() ? "0" : attach_rowsets[0]->rowset_id().to_string());
 
             } else if (commit_txn_status.is<ErrorCode::INTERNAL_ERROR>()) {
                 LOG(WARNING) << "failed to add committed rowset: " << rowset_meta->rowset_id()
                              << " to tablet: " << rowset_meta->tablet_id()
                              << " for txn: " << rowset_meta->txn_id()
-                             << " error: " << commit_txn_status;
+                             << " error: " << commit_txn_status
+                             << ", binlog<row> rowset: " << (attach_rowsets.empty() ? "0" : attach_rowsets[0]->rowset_id().to_string());
                 return commit_txn_status;
             } else {
                 LOG(WARNING) << "failed to add committed rowset: " << rowset_meta->rowset_id()
                              << " to tablet: " << rowset_meta->tablet_id()
                              << " for txn: " << rowset_meta->txn_id()
-                             << " error: " << commit_txn_status;
+                             << " error: " << commit_txn_status
+                             << ", binlog<row> rowset: " << (attach_rowsets.empty() ? "0" : attach_rowsets[0]->rowset_id().to_string());
             }
         } else if (rowset_meta->rowset_state() == RowsetStatePB::VISIBLE &&
                    rowset_meta->tablet_uid() == tablet->tablet_uid()) {
@@ -677,7 +680,8 @@ Status DataDir::load() {
                              << rowset->rowset_id() << " tablet id: " << rowset_meta->tablet_id()
                              << " txn id:" << rowset_meta->txn_id()
                              << " start_version: " << rowset_meta->version().first
-                             << " end_version: " << rowset_meta->version().second;
+                             << " end_version: " << rowset_meta->version().second
+                             << ", binlog<row> rowset: " << (attach_rowsets.empty() ? "0" : attach_rowsets[0]->rowset_id().to_string());
             }
         } else {
             LOG(WARNING) << "find invalid rowset: " << rowset_meta->rowset_id()
@@ -685,7 +689,8 @@ Status DataDir::load() {
                          << " tablet uid: " << rowset_meta->tablet_uid()
                          << " schema hash: " << rowset_meta->tablet_schema_hash()
                          << " txn: " << rowset_meta->txn_id()
-                         << " current valid tablet uid: " << tablet->tablet_uid();
+                         << " current valid tablet uid: " << tablet->tablet_uid()
+                         << ", binlog<row> rowset: " << (attach_rowsets.empty() ? "0" : attach_rowsets[0]->rowset_id().to_string());
             ++invalid_rowset_counter;
         }
     }

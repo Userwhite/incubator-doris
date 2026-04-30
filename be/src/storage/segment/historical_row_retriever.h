@@ -18,12 +18,17 @@
 #pragma once
 
 #include "common/status.h"
-#include "storage/tablet/tablet_fwd.h"
-#include "storage/rowset/rowset_writer_context.h"
-#include "storage/olap_utils.h"
 #include "core/block/block.h"
+#include "storage/olap_define.h"
+#include "storage/olap_utils.h"
+#include "storage/partial_update_info.h"
+#include "storage/tablet/tablet_fwd.h"
 
 namespace doris {
+struct RowsetWriterContext;
+class KeyCoder;
+struct MowContext;
+
 namespace segment_v2 {
 
 struct HistoricalRowRetrieverContext {

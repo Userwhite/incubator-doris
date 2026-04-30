@@ -129,6 +129,7 @@ BaseTablet::BaseTablet(TabletMetaSharedPtr tablet_meta) : _tablet_meta(std::move
     // construct _timestamped_versioned_tracker from rs and stale rs meta
     _timestamped_version_tracker.construct_versioned_tracker(_tablet_meta->all_rs_metas(),
                                                              _tablet_meta->all_stale_rs_metas());
+    _row_binlog_version_tracker.construct_versioned_tracker(_tablet_meta->all_row_binlog_rs_metas());
 
     // if !_tablet_meta->all_rs_metas()[0]->tablet_schema(),
     // that mean the tablet_meta is still no upgrade to doris 1.2 versions.
@@ -303,11 +304,14 @@ Versions BaseTablet::get_missed_versions(int64_t spec_version) const {
     return calc_missed_versions(spec_version, std::move(existing_versions));
 }
 
-Versions BaseTablet::get_missed_versions_unlocked(int64_t spec_version) const {
+Versions BaseTablet::get_missed_versions_unlocked(int64_t spec_version,
+                                                  bool capture_row_binlog) const {
     DCHECK(spec_version > 0) << "invalid spec_version: " << spec_version;
 
     Versions existing_versions;
-    for (const auto& [ver, _] : _tablet_meta->all_rs_metas()) {
+    const auto& rs_metas = capture_row_binlog ? _tablet_meta->all_row_binlog_rs_metas()
+                                              : _tablet_meta->all_rs_metas();
+    for (const auto& [ver, _] : rs_metas) {
         existing_versions.emplace_back(ver);
     }
     return calc_missed_versions(spec_version, std::move(existing_versions));
@@ -809,6 +813,29 @@ Status BaseTablet::calc_segment_delete_bitmap(RowsetSharedPtr rowset,
                     read_plan_update, rsid_to_rowset, &block));
         }
         RETURN_IF_ERROR(sort_block(block, ordered_block));
+
+        // Publish-phase partial update may flush transient segments to a GroupRowsetWriter.
+        // For row-binlog writing, RowBinlogSegmentWriter requires `seg_id -> lsn_ids` to be
+        // registered before the segment writer is constructed.
+        if (auto* group_writer = typeid_cast<GroupRowsetWriter*>(rowset_writer);
+            group_writer != nullptr) {
+            auto seg_id = group_writer->get_allocated_segment_id();
+            auto binlog_writer = group_writer->row_binlog_writer();
+            auto& binlog_ctx = const_cast<RowsetWriterContext&>(binlog_writer->context());
+            if (binlog_ctx.write_binlog_opt().need_build_binlog()) {
+                auto db_id = binlog_writer->rowset_meta()->db_id();
+                auto table_id = binlog_writer->rowset_meta()->table_id();
+                DCHECK_GT(db_id, 0);
+                DCHECK_GT(table_id, 0);
+                auto lsn_buffer = GlobalAutoIncBuffers::GetInstance()->get_auto_inc_buffer(
+                        db_id, table_id, kBinlogLsnAutoIncId);
+                std::shared_ptr<std::vector<int128_t>> lsn_ids;
+                RETURN_IF_ERROR(
+                        allocate_binlog_lsn(lsn_buffer, ordered_block.rows(), &lsn_ids));
+                binlog_ctx.write_binlog_opt().write_binlog_config().insert_seg_lsn(
+                        seg_id, std::move(lsn_ids));
+            }
+        }
         RETURN_IF_ERROR(rowset_writer->flush_single_block(&ordered_block));
         auto cost_us = watch.get_elapse_time_us();
         if (config::enable_mow_verbose_log || cost_us > 10 * 1000) {
@@ -1558,26 +1585,6 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         cfg.source.is_transient_rowset_writer = data_ctx.is_transient_rowset_writer;
         cfg.source.source_write_type = data_ctx.write_type;
 
-        // Keep binlog writer context self-sufficient for historical row retrieval.
-        binlog_ctx.mow_context = data_ctx.mow_context;
-        binlog_ctx.partial_update_info = data_ctx.partial_update_info;
-
-        // Allocate per-row LSNs for each transient segment.
-        const TabletSchemaSPtr& row_binlog_schema = row_binlog_rowset->tablet_schema();
-        int64_t db_id = row_binlog_schema->db_id();
-        int64_t table_id = row_binlog_schema->table_id();
-
-        auto lsn_buffer = GlobalAutoIncBuffers::GetInstance()->get_auto_inc_buffer(
-                db_id, table_id, kBinlogLsnAutoIncId);
-
-        int32_t transient_segment_start_id = cast_set<int32_t>(row_binlog_rowset->num_segments());
-        for (int32_t seg_idx = 0; seg_idx < cast_set<int32_t>(segments.size()); ++seg_idx) {
-            std::shared_ptr<std::vector<int128_t>> lsn_ids;
-            RETURN_IF_ERROR(allocate_binlog_lsn(lsn_buffer, segments[seg_idx]->num_rows(), &lsn_ids));
-            binlog_ctx.write_binlog_opt().write_binlog_config().insert_seg_lsn(
-                    transient_segment_start_id + seg_idx, std::move(lsn_ids));
-        }
-
         // Wrap two transient writers into a group writer for dual flush/build.
         RowsetWriterSharedPtr data_writer_sp(std::move(transient_rs_writer));
         RowsetWriterSharedPtr row_binlog_writer_sp(std::move(transient_row_binlog_writer));
@@ -1635,8 +1642,10 @@ Status BaseTablet::update_delete_bitmap(const BaseTabletSPtr& self, TabletTxnInf
         if (build_row_binlog) {
             auto* group_rowset_writer = typeid_cast<GroupRowsetWriter*>(transient_rs_writer.get());
             DCHECK(group_rowset_writer != nullptr);
-            auto waited_build_rowsets = std::vector<RowsetSharedPtr>({transient_rowset, transient_row_binlog});
+            std::vector<RowsetSharedPtr> waited_build_rowsets;
             RETURN_IF_ERROR(group_rowset_writer->build_rowsets(waited_build_rowsets));
+            transient_rowset = waited_build_rowsets.at(0);
+            transient_row_binlog = waited_build_rowsets.at(1);
         } else {
             RETURN_IF_ERROR(transient_rs_writer->build(transient_rowset));
         }

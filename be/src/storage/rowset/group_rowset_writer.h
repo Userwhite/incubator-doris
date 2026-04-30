@@ -114,6 +114,14 @@ public:
         return -1;
     }
 
+    int32_t get_allocated_segment_id() override {
+        DCHECK(_txn_rowset_writer != nullptr);
+        DCHECK(_row_binlog_rowset_writer != nullptr);
+        auto seg_id = _txn_rowset_writer->get_allocated_segment_id();
+        DCHECK_EQ(seg_id, _row_binlog_rowset_writer->get_allocated_segment_id());
+        return seg_id;
+    }
+
     void set_segment_start_id(int num_segment) override {
         (void)num_segment;
         LOG(FATAL) << "GroupRowsetWriter::set_segment_start_id not supported";

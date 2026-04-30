@@ -59,6 +59,8 @@ struct SharedMemtable {
     std::shared_ptr<MemTable> memtable;
     int32_t segment_id = 0;
 
+    ~SharedMemtable();
+
     std::once_flag block_once;
     Status block_status;
     std::shared_ptr<Block> block;

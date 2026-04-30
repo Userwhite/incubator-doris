@@ -248,6 +248,11 @@ struct Version {
     }
 
     std::string to_string() const { return fmt::format("[{}-{}]", first, second); }
+
+    void init_from_thrift(const TVersionRange& version_range) {
+        first = version_range.start_version;
+        second = version_range.end_version;
+    }
 };
 
 using Versions = std::vector<Version>;

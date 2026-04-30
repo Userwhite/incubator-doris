@@ -48,6 +48,10 @@ class Tablet;
 class FileWriterCreator;
 class SegmentCollector;
 
+namespace segment_v2 {
+struct HistoricalRowRetrieverContext;
+}
+
 struct RowsetWriterContext {
     RowsetWriterContext() : schema_lock(new std::mutex) {
         load_id.set_hi(0);
@@ -55,6 +59,8 @@ struct RowsetWriterContext {
     }
 
     RowsetId rowset_id;
+    int64_t db_id {0};
+    int64_t table_id {0};
     int64_t tablet_id {0};
     int32_t tablet_schema_hash {0};
     int64_t index_id {0};
@@ -118,6 +124,8 @@ struct RowsetWriterContext {
     std::shared_ptr<PartialUpdateInfo> partial_update_info;
 
     bool is_transient_rowset_writer = false;
+
+    segment_v2::HistoricalRowRetrieverContext make_historical_row_retriever_context();
 
     // Intent flag: caller can actively turn merge-file feature on/off for this rowset.
     // This describes whether we *want* to try small-file merging.
@@ -294,5 +302,22 @@ struct RowsetWriterContext {
 
     const BinlogOptions& write_binlog_opt() const { return _write_binlog_opt; }
 };
+
+} // namespace doris
+
+#include "storage/segment/historical_row_retriever.h"
+
+namespace doris {
+
+inline segment_v2::HistoricalRowRetrieverContext
+RowsetWriterContext::make_historical_row_retriever_context() {
+    return segment_v2::HistoricalRowRetrieverContext {
+            .tablet = tablet,
+            .tablet_schema = tablet_schema,
+            .rowset_writer_ctx = this,
+            .partial_update_info = partial_update_info,
+            .is_transient_rowset_writer = is_transient_rowset_writer,
+            .write_type = write_type};
+}
 
 } // namespace doris

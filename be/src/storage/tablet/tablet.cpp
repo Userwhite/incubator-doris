@@ -2019,28 +2019,22 @@ Status Tablet::create_initial_rowset(const int64_t req_version) {
 
         RowsetWriterContext data_context;
         data_context.write_binlog_opt().mark_primary_writer();
-        RETURN_IF_ERROR(get_rowset_writer_context(data_context, row_binlog_tablet_schema()));
+        RETURN_IF_ERROR(get_rowset_writer_context(data_context, tablet_schema()));
         auto data_writer = DORIS_TRY(create_rowset_writer(data_context, false));
         group_rowset_writer->set_data_writer(std::move(data_writer));
 
         RowsetWriterContext row_binlog_context;
         row_binlog_context.write_binlog_opt().mark_binlog_writer();
-        RETURN_IF_ERROR(get_rowset_writer_context(row_binlog_context, tablet_schema()));
+        RETURN_IF_ERROR(get_rowset_writer_context(row_binlog_context, row_binlog_tablet_schema()));
         auto row_binlog_writer = DORIS_TRY(create_rowset_writer(row_binlog_context, false));
         group_rowset_writer->set_row_binlog_writer(std::move(row_binlog_writer));
 
         RETURN_IF_ERROR(group_rowset_writer->flush_rowsets());
 
-        RowsetSharedPtr new_data_rowset;
-        RowsetSharedPtr new_row_binlog_rowset;
         std::vector<RowsetSharedPtr> waited_build_rowsets;
-        waited_build_rowsets.push_back(std::move(new_data_rowset));
-        waited_build_rowsets.push_back(std::move(new_row_binlog_rowset));
 
         RETURN_IF_ERROR(group_rowset_writer->build_rowsets(waited_build_rowsets));
-        // don't need to think rollback when only one rowset build success becuase they had not been persisted.
-        RETURN_IF_ERROR(
-                add_rowset(std::move(waited_build_rowsets.at(0)), waited_build_rowsets.at(1)));
+        RETURN_IF_ERROR(add_rowset(waited_build_rowsets.at(0), waited_build_rowsets.at(1)));
     }
 
     set_cumulative_layer_point(req_version + 1);
@@ -2062,6 +2056,8 @@ Result<std::unique_ptr<RowsetWriter>> Tablet::create_transient_rowset_writer(
     RowsetWriterContext context;
     context.rowset_state = PREPARED;
     context.segments_overlap = OVERLAPPING;
+    context.db_id = rowset.rowset_meta()->db_id();
+    context.table_id = rowset.rowset_meta()->table_id();
     context.tablet_schema = std::make_shared<TabletSchema>();
     // During a partial update, the extracted columns of a variant should not be included in the tablet schema.
     // This is because the partial update for a variant needs to ignore the extracted columns.
@@ -2109,6 +2105,13 @@ Result<std::unique_ptr<RowsetWriter>> Tablet::create_transient_rowset_writer(
 }
 
 void Tablet::_init_context_common_fields(RowsetWriterContext& context) {
+    if (context.db_id <= 0) {
+        context.db_id = tablet_meta()->tablet_schema()->db_id();
+    }
+    if (context.table_id <= 0) {
+        context.table_id = tablet_meta()->tablet_schema()->table_id();
+    }
+
     context.tablet_uid = tablet_uid();
     context.tablet_id = tablet_id();
     context.partition_id = partition_id();

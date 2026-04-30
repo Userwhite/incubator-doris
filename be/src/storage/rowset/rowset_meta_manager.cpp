@@ -178,7 +178,7 @@ Status RowsetMetaManager::_save_with_row_binlog(
     std::string row_binlog_rowset_key;
     std::string row_binlog_rowset_value;
     for (const auto& [row_binlog_rs_id, row_binlog_rs_meta_pb] : attach_rowset_map) {
-        row_binlog_rowset_key = make_row_binlog_meta_key(tablet_uid, rowset_id, row_binlog_rs_id);
+        row_binlog_rowset_key = make_row_binlog_key(tablet_uid, rowset_id, row_binlog_rs_id);
         if (!row_binlog_rs_meta_pb.SerializeToString(&row_binlog_rowset_value)) {
             return Status::Error<SERIALIZE_PROTOBUF_ERROR>(
                     "serialize rowset pb failed. rowset id:{}", rowset_key);

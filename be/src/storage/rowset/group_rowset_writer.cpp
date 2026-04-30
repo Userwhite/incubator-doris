@@ -36,8 +36,20 @@ Status GroupRowsetWriter::flush_rowsets() {
 }
 
 Status GroupRowsetWriter::build_rowsets(std::vector<RowsetSharedPtr>& rowsets) {
-    RETURN_IF_ERROR(_txn_rowset_writer->build(rowsets.at(0)));
-    RETURN_IF_ERROR(_row_binlog_rowset_writer->build(rowsets.at(1)));
+    rowsets.clear();
+    rowsets.reserve(2);
+
+    // Note: on partial failure (one rowset built, the other fails), we keep this method simple
+    // and rely on the caller's RowsetBuilder/StorageEngine cleanup paths to reclaim the
+    // built-but-uncommitted rowset files.
+
+    RowsetSharedPtr txn_rowset;
+    RowsetSharedPtr row_binlog_rowset;
+    RETURN_IF_ERROR(_txn_rowset_writer->build(txn_rowset));
+    RETURN_IF_ERROR(_row_binlog_rowset_writer->build(row_binlog_rowset));
+
+    rowsets.emplace_back(std::move(txn_rowset));
+    rowsets.emplace_back(std::move(row_binlog_rowset));
     return Status::OK();
 }
 

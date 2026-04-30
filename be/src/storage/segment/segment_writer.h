@@ -51,8 +51,6 @@ struct MowContext;
 const uint32_t MAX_SEGMENT_SIZE = static_cast<uint32_t>(OLAP_MAX_COLUMN_SEGMENT_FILE_SIZE *
                                                         OLAP_COLUMN_FILE_SEGMENT_SIZE_SCALE);
 
-static constexpr const char* BINLOG_LSN_COL = "__DORIS_BINLOG_LSN__";
-
 class DataDir;
 class MemTracker;
 class ShortKeyIndexBuilder;

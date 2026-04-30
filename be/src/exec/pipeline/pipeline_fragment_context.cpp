@@ -1084,6 +1084,7 @@ Status PipelineFragmentContext::_create_data_sink(ObjectPool* pool, const TDataS
     case TDataSinkType::OLAP_TABLE_SINK: {
         if (state->query_options().enable_memtable_on_sink_node &&
             !_has_inverted_index_v1_or_partial_update(thrift_sink.olap_table_sink) &&
+            !_has_row_binlog(thrift_sink.olap_table_sink) &&
             !config::is_cloud_mode()) {
             _sink = std::make_shared<OlapTableSinkV2OperatorX>(pool, next_sink_operator_id(),
                                                                row_desc, output_exprs);

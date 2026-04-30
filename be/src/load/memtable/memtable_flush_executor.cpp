@@ -119,6 +119,17 @@ std::ostream& operator<<(std::ostream& os, const FlushStatistic& stat) {
     return os;
 }
 
+SharedMemtable::~SharedMemtable() {
+    if (block == nullptr) {
+        return;
+    }
+    DCHECK(memtable != nullptr);
+    SCOPED_SWITCH_THREAD_MEM_TRACKER_LIMITER(
+            memtable->resource_ctx()->memory_context()->mem_tracker()->write_tracker());
+    SCOPED_CONSUME_MEM_TRACKER(memtable->mem_tracker());
+    block.reset();
+}
+
 Status FlushToken::_submit_sub_tasks(ThreadPool* pool, std::vector<std::shared_ptr<Runnable>> sub_tasks) {
     for (int i = 0; i < sub_tasks.size(); ++i){
         {
@@ -189,7 +200,7 @@ Status FlushToken::submit(std::shared_ptr<MemTable> mem_table) {
                                                                 WriteRequestType::DATA_IN_GROUP,
                                                                 submit_task_time));
         tasks.emplace_back(PartOfGroupMemtableFlushTask::create_shared(shared_from_this(), shared_memtable,
-                                                                WriteRequestType::ROW_BINLOG,
+                                                                WriteRequestType::BINLOG_IN_GROUP,
                                                                 submit_task_time));
     } else {
         tasks.emplace_back(MemtableFlushTask::create_shared(shared_from_this(), mem_table,
@@ -215,7 +226,7 @@ void FlushToken::_flush_group_memtable(std::shared_ptr<SharedMemtable> shared_me
     DCHECK(shared_memtable != nullptr);
     DCHECK(shared_memtable->memtable != nullptr);
     DCHECK(write_req_type == WriteRequestType::DATA_IN_GROUP ||
-           write_req_type == WriteRequestType::ROW_BINLOG);
+           write_req_type == WriteRequestType::BINLOG_IN_GROUP);
 
     auto* group_rowset_writer = typeid_cast<GroupRowsetWriter*>(_rowset_writer.get());
     DCHECK(group_rowset_writer != nullptr);
@@ -395,7 +406,6 @@ void FlushToken::_flush_memtable_impl(RowsetWriter* flush_writer, MemTable* memt
             s = flush_writer->flush_memtable(flush_block.get(), segment_id, &flush_size);
         }
     }
-
     if (s.ok()) {
         memtable->set_flush_success();
     }
@@ -434,7 +444,10 @@ void FlushToken::_flush_memtable_impl(RowsetWriter* flush_writer, MemTable* memt
                   << ", disk size: " << PrettyPrinter::print_bytes(flush_size);
 
     _stats.flush_time_ns += timer.elapsed_time();
-    (shared_memtable != nullptr) ? shared_memtable->add_finished_sub_task() : _stats.flush_finish_count++;
+    if (shared_memtable != nullptr) {
+        shared_memtable->add_finished_sub_task();
+    }
+    _stats.flush_finish_count++;
     _stats.flush_size_bytes += memtable->memory_usage();
     _stats.flush_disk_size_bytes += flush_size;
 }

@@ -500,10 +500,6 @@ public:
 
     // row_binlog
     int32_t row_binlog_schema_hash() const { return _tablet_meta->row_binlog_schema_hash(); }
-    TabletSchemaSPtr row_binlog_tablet_schema() {
-        std::shared_lock rdlock(_meta_lock);
-        return _tablet_meta->row_binlog_schema();
-    }
 
     void set_is_full_compaction_running(bool is_full_compaction_running) {
         _is_full_compaction_running = is_full_compaction_running;

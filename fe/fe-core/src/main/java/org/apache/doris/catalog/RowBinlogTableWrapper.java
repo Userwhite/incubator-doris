@@ -37,4 +37,18 @@ public class RowBinlogTableWrapper extends OlapTableWrapper {
     public long getBaseIndexId() {
         return rowBinlogMeta.getIndexId();
     }
+
+    @Override
+    public MaterializedIndex getPartitionIndex(Partition partition, long indexId) {
+        MaterializedIndex index = partition.getIndex(indexId);
+        if (index != null) {
+            return index;
+        }
+        // The row-binlog index meta does not exist as a partition index.
+        // For scan range generation, reuse the base index's tablets.
+        if (indexId == rowBinlogMeta.getIndexId()) {
+            return partition.getIndex(originTable.getBaseIndexId());
+        }
+        return null;
+    }
 }

@@ -1496,6 +1496,17 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         return partition;
     }
 
+    /**
+     * Get the materialized index for scan planning.
+     *
+     * <p>Default behavior is equivalent to {@link Partition#getIndex(long)}.
+     * Wrapper tables may override this to redirect index selection (e.g. row-binlog wrapper
+     * uses the base index's tablets while keeping a different schema/index meta).
+     */
+    public MaterializedIndex getPartitionIndex(Partition partition, long indexId) {
+        return partition.getIndex(indexId);
+    }
+
     public PartitionItem getPartitionItemOrAnalysisException(String partitionName) throws AnalysisException {
         Partition partition = nameToPartition.get(partitionName);
         if (partition == null) {
@@ -2348,8 +2359,6 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             if (autoIncrementGenerator != null) {
                 throw new DdlException("enable binlog isn't allowed on the table with auto-increment column");
             }
-
-            initAutoIncrementGenerator(dbId);
         } finally {
             writeUnlock();
         }

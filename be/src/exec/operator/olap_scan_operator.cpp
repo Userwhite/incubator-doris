@@ -45,11 +45,22 @@
 #include "service/backend_options.h"
 #include "storage/index/ann/ann_topn_runtime.h"
 #include "storage/storage_engine.h"
+#include "storage/tablet/tablet.h"
 #include "storage/tablet/tablet_manager.h"
 #include "util/to_string.h"
 
 namespace doris {
 #include "common/compile_check_begin.h"
+
+static Version _get_scan_range_version_range(const TPaloScanRange& scan_range) {
+    if (scan_range.__isset.spec_version) {
+        return {scan_range.spec_version.start_version, scan_range.spec_version.end_version};
+    }
+    int64_t version = 0;
+    std::from_chars(scan_range.version.data(), scan_range.version.data() + scan_range.version.size(),
+                    version);
+    return {0, version};
+}
 
 Status OlapScanLocalState::init(RuntimeState* state, LocalStateInfo& info) {
     const TOlapScanNode& olap_scan_node = _parent->cast<OlapScanOperatorX>()._olap_scan_node;
@@ -568,11 +579,7 @@ Status OlapScanLocalState::_init_scanners(std::list<ScannerSPtr>* scanners) {
 
     int scanners_per_tablet = std::max(1, 64 / (int)_scan_ranges.size());
     for (size_t scan_range_idx = 0; scan_range_idx < _scan_ranges.size(); scan_range_idx++) {
-        int64_t version = 0;
-        std::from_chars(_scan_ranges[scan_range_idx]->version.data(),
-                        _scan_ranges[scan_range_idx]->version.data() +
-                                _scan_ranges[scan_range_idx]->version.size(),
-                        version);
+        const int64_t version = _get_scan_range_version_range(*_scan_ranges[scan_range_idx]).second;
         std::vector<std::unique_ptr<doris::OlapScanRange>>* ranges = &_cond_ranges;
         int size_based_scanners_per_tablet = 1;
 
@@ -610,6 +617,8 @@ Status OlapScanLocalState::_init_scanners(std::list<ScannerSPtr>* scanners) {
                                                              _read_sources[scan_range_idx],
                                                              p._limit,
                                                              p._olap_scan_node.is_preaggregation,
+                                                             p._olap_scan_node.__isset.read_row_binlog &&
+                                                                     p._olap_scan_node.read_row_binlog,
                                                      });
             RETURN_IF_ERROR(scanner->init(state(), _conjuncts));
             scanners->push_back(std::move(scanner));
@@ -633,10 +642,7 @@ Status OlapScanLocalState::_sync_cloud_tablets(RuntimeState* state) {
             _sync_statistics.resize(_scan_ranges.size());
             for (size_t i = 0; i < _scan_ranges.size(); i++) {
                 auto* sync_stats = &_sync_statistics[i];
-                int64_t version = 0;
-                std::from_chars(_scan_ranges[i]->version.data(),
-                                _scan_ranges[i]->version.data() + _scan_ranges[i]->version.size(),
-                                version);
+                const int64_t version = _get_scan_range_version_range(*_scan_ranges[i]).second;
                 auto task_ctx = state->get_task_execution_context();
                 auto task_create_time = std::chrono::steady_clock::now();
                 tasks.emplace_back([this, sync_stats, version, i, task_ctx, task_create_time]() {
@@ -765,32 +771,47 @@ Status OlapScanLocalState::prepare(RuntimeState* state) {
     } else {
         _tablets.resize(_scan_ranges.size());
         for (size_t i = 0; i < _scan_ranges.size(); i++) {
-            int64_t version = 0;
-            std::from_chars(_scan_ranges[i]->version.data(),
-                            _scan_ranges[i]->version.data() + _scan_ranges[i]->version.size(),
-                            version);
+            const int64_t version = _get_scan_range_version_range(*_scan_ranges[i]).second;
             auto tablet = DORIS_TRY(ExecEnv::get_tablet(_scan_ranges[i]->tablet_id));
             _tablets[i] = {std::move(tablet), version};
         }
     }
 
+    const bool read_row_binlog = olap_scan_node().__isset.read_row_binlog &&
+                                olap_scan_node().read_row_binlog;
+
     for (size_t i = 0; i < _scan_ranges.size(); i++) {
-        _read_sources[i] = DORIS_TRY(_tablets[i].tablet->capture_read_source(
-                {0, _tablets[i].version},
-                {.skip_missing_versions = _state->skip_missing_version(),
-                 .enable_fetch_rowsets_from_peers = config::enable_fetch_rowsets_from_peer_replicas,
-                 .enable_prefer_cached_rowset =
-                         config::is_cloud_mode() ? _state->enable_prefer_cached_rowset() : false,
-                 .query_freshness_tolerance_ms =
-                         config::is_cloud_mode() ? _state->query_freshness_tolerance_ms() : -1}));
-        if (!PipelineXLocalState<>::_state->skip_delete_predicate()) {
-            _read_sources[i].fill_delete_predicates();
-        }
-        if (config::enable_mow_verbose_log &&
-            _tablets[i].tablet->enable_unique_key_merge_on_write()) {
-            LOG_INFO("finish capture_rs_readers for tablet={}, query_id={}",
-                     _tablets[i].tablet->tablet_id(),
-                     print_id(PipelineXLocalState<>::_state->query_id()));
+        const Version version_range = _get_scan_range_version_range(*_scan_ranges[i]);
+        if (read_row_binlog) {
+            auto* local_tablet = dynamic_cast<Tablet*>(_tablets[i].tablet.get());
+            if (local_tablet == nullptr) {
+                return Status::NotSupported(
+                        "row binlog scan is only supported for local tablet");
+            }
+            _read_sources[i] = DORIS_TRY(_tablets[i].tablet->capture_read_source(
+                    version_range, {.skip_missing_versions = _state->skip_missing_version(),
+                                    .capture_row_binlog = true}));
+        } else {
+            _read_sources[i] = DORIS_TRY(_tablets[i].tablet->capture_read_source(
+                    version_range,
+                    {.skip_missing_versions = _state->skip_missing_version(),
+                     .enable_fetch_rowsets_from_peers =
+                             config::enable_fetch_rowsets_from_peer_replicas,
+                     .enable_prefer_cached_rowset =
+                             config::is_cloud_mode() ? _state->enable_prefer_cached_rowset()
+                                                    : false,
+                     .query_freshness_tolerance_ms =
+                             config::is_cloud_mode() ? _state->query_freshness_tolerance_ms()
+                                                    : -1}));
+            if (!PipelineXLocalState<>::_state->skip_delete_predicate()) {
+                _read_sources[i].fill_delete_predicates();
+            }
+            if (config::enable_mow_verbose_log &&
+                _tablets[i].tablet->enable_unique_key_merge_on_write()) {
+                LOG_INFO("finish capture_rs_readers for tablet={}, query_id={}",
+                         _tablets[i].tablet->tablet_id(),
+                         print_id(PipelineXLocalState<>::_state->query_id()));
+            }
         }
     }
     timer.stop();
@@ -852,7 +873,10 @@ void OlapScanLocalState::set_scan_ranges(RuntimeState* state,
                                          const std::vector<TScanRangeParams>& scan_ranges) {
     const auto& cache_param = _parent->cast<OlapScanOperatorX>()._cache_param;
     bool hit_cache = false;
-    if (!cache_param.digest.empty() && !cache_param.force_refresh_query_cache) {
+    // Debug-only row-binlog scan should not participate in query cache.
+    if (olap_scan_node().__isset.read_row_binlog && olap_scan_node().read_row_binlog) {
+        hit_cache = false;
+    } else if (!cache_param.digest.empty() && !cache_param.force_refresh_query_cache) {
         std::string cache_key;
         int64_t version = 0;
         auto status = QueryCache::build_cache_key(scan_ranges, cache_param, &cache_key, &version);

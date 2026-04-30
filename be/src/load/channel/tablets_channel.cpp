@@ -285,7 +285,7 @@ std::unique_ptr<BaseDeltaWriter> TabletsChannel::create_delta_writer(
     group_req->data_req.write_req_type = WriteRequestType::DATA_IN_GROUP;
 
     group_req->row_binlog_req = *request;
-    group_req->row_binlog_req.write_req_type = WriteRequestType::ROW_BINLOG;
+    group_req->row_binlog_req.write_req_type = WriteRequestType::BINLOG_IN_GROUP;
     group_req->row_binlog_req.index_id = row_binlog_index_schema->index_id;
     group_req->row_binlog_req.schema_hash = row_binlog_index_schema->schema_hash;
 
